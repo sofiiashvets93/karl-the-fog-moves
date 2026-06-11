@@ -168,7 +168,9 @@ body::after {
   position: absolute;
   right: 20px;
   top: 50%;
-  transform: translateY(-50%);
+  /* `translate`, not `transform`: the rise animation ends at transform:none
+     and would wipe a transform-based centering once it finishes */
+  translate: 0 -50%;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -250,9 +252,12 @@ body::after {
 
 /* ——— timeline, bottom center ——— */
 #timeline {
-  left: 50%;
+  /* centered via auto margins — transform centering breaks when the rise
+     animation settles on transform:none */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
   bottom: 20px;
-  transform: translateX(-50%);
   width: min(860px, calc(100vw - 40px));
   padding: 12px 16px 9px;
   animation: rise 0.9s cubic-bezier(.2,.8,.2,1) 0.7s both;
@@ -366,12 +371,25 @@ body::after {
   #brand { max-width: 250px; padding: 12px 14px 11px; }
   #brand h1 { font-size: 38px; }
   .hint { display: none; }
-  #readout { top: auto; bottom: 196px; right: 12px; left: auto; }
-  #readout .cell { padding: 9px 11px 8px; min-width: 64px; }
-  #readout .num { font-size: 16px; }
   #views { display: none; }
-  #caption { bottom: 196px; left: 14px; max-width: 200px; }
-  #caption em { font-size: 16px; }
-  #timeline { bottom: 10px; width: calc(100vw - 20px); }
-  .tl-time b { font-size: 16px; }
+  #caption { display: none; }
+
+  /* readouts become a full-width strip just above the timeline */
+  #readout { top: auto; bottom: 122px; right: 10px; left: 10px; }
+  #readout .cell { padding: 8px 6px 7px; min-width: 0; flex: 1; }
+  #readout .num { font-size: 15px; }
+  #readout label { font-size: 7.5px; letter-spacing: 0.12em; }
+
+  /* compact timeline */
+  #timeline { bottom: 10px; width: calc(100vw - 20px); padding: 8px 10px 7px; }
+  .tl-top { gap: 6px; margin-bottom: 6px; }
+  .play-btn { width: 30px; height: 30px; }
+  .play-btn svg { width: 13px; height: 13px; }
+  #timeline .ghost-btn { padding: 5px 8px; font-size: 9px; }
+  .tl-time { gap: 6px; }
+  .tl-time b { font-size: 14px; }
+  #chart { height: 44px; }
+  .tl-foot { margin-top: 4px; font-size: 7.5px; }
+  .tl-foot span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tl-foot span:last-child { display: none; }
 }
