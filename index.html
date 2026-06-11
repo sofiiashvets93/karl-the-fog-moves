@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌁 Karl — the San Francisco Fog, live</title>
+<meta name="description" content="A live 3-D simulation of Karl the Fog rolling in and out of San Francisco, driven by real marine-layer forecast data.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌁</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Spline+Sans+Mono:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="loading">
+  <div class="load-inner">
+    <div class="load-karl">KARL</div>
+    <div class="load-sub">summoning the marine layer…</div>
+  </div>
+</div>
+
+<canvas id="scene"></canvas>
+
+<main id="hud" class="hidden">
+
+  <header id="brand" class="panel">
+    <div class="brand-row">
+      <h1>Karl</h1>
+      <div class="brand-chips">
+        <span id="live-chip" class="chip chip-live"><i class="dot"></i><span id="live-chip-text">LIVE</span></span>
+        <span id="date-chip" class="chip">JUN 10</span>
+      </div>
+    </div>
+    <p class="tagline">The San Francisco Fog &middot; live 3-D simulation</p>
+    <p class="hint">drag to orbit &middot; scrub the timeline to time-travel</p>
+    <button id="foghorn" class="ghost-btn" title="Sound the Golden Gate foghorn">&#9836; foghorn</button>
+  </header>
+
+  <section id="readout" class="panel">
+    <div class="cell">
+      <span class="num"><b id="r-fog">--</b><small>%</small></span>
+      <label>fog cover</label>
+    </div>
+    <div class="cell">
+      <span class="num"><b id="r-vis">--</b><small>mi</small></span>
+      <label>visibility</label>
+    </div>
+    <div class="cell">
+      <span class="num"><b id="r-wind">--</b><small id="r-wind-dir">W</small></span>
+      <label>wind mph</label>
+    </div>
+    <div class="cell">
+      <span class="num"><b id="r-temp">--</b><small>&deg;F</small></span>
+      <label>air temp</label>
+    </div>
+  </section>
+
+  <nav id="views">
+    <span class="views-label">viewpoints</span>
+    <button data-view="ocean"    class="ghost-btn on">The Pacific</button>
+    <button data-view="gate"     class="ghost-btn">Golden Gate</button>
+    <button data-view="downtown" class="ghost-btn">Downtown</button>
+    <button data-view="above"    class="ghost-btn">Above Karl</button>
+  </nav>
+
+  <div id="caption">
+    <span class="caption-dash"></span>
+    <em id="caption-text">Karl is gathering himself offshore.</em>
+  </div>
+
+  <footer id="timeline" class="panel">
+    <div class="tl-top">
+      <button id="play" class="play-btn" title="Simulate the next 24 hours">
+        <svg id="play-icon" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg id="pause-icon" viewBox="0 0 24 24" class="off"><path d="M6.5 4h4v16h-4zM13.5 4h4v16h-4z"/></svg>
+      </button>
+      <button id="now-btn" class="ghost-btn">now</button>
+      <button id="speed-btn" class="ghost-btn" title="Simulation speed">1&times;</button>
+      <div class="tl-time">
+        <b id="tl-clock">--:--</b>
+        <span id="tl-day">---</span>
+        <span id="tl-tag" class="chip chip-fc off">forecast</span>
+      </div>
+    </div>
+    <canvas id="chart"></canvas>
+    <div class="tl-foot">
+      <span>next 24 hours of Karl &middot; <i id="data-src">marine forecast: open-meteo</i></span>
+      <span>not for navigation &#127753;</span>
+    </div>
+  </footer>
+
+</main>
+
+<div id="webgl-fail" class="hidden">
+  <p>Karl needs WebGL2 to materialize.<br>Try a recent Chrome, Safari or Firefox.</p>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
