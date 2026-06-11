@@ -74,7 +74,7 @@ document.querySelectorAll('#views button').forEach((b) => {
 
 // ————— build the world —————
 const sky = new SkyRig(scene);
-const { cityLights } = buildWorld(scene);
+const { cityLights } = await buildWorld(scene); // loads the baked USGS heightfield
 const fogPipe = new FogPipeline(renderer);
 
 // ————— simulation clock —————

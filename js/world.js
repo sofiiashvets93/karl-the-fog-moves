@@ -1,157 +1,86 @@
 // Builds the stylized 3-D San Francisco: terrain, water, city, bridges, landmarks.
+// Topography is the real thing: a USGS heightfield baked into js/data/heightmap.png
+// by tools/fetch-geodata.mjs; parks are OpenStreetMap polygons from the same script.
 
 import * as THREE from 'three';
-import { W, hU, WORLD_W, WORLD_H } from './geo.js';
+import { REGION, KM_LON, KM_LAT, UPK, C_LON, C_LAT, W, hU, WORLD_W, WORLD_H } from './geo.js';
+import { HF_META, PARKS, WATERS } from './data/geodata.js';
 
-// ————— coastline polygons (lon, lat), walked around each landmass —————
+// ————— real topography —————
 
-const SF_COAST = [
-  [-122.5135, 37.7885], // Lands End
-  [-122.4920, 37.7905], // Sea Cliff
-  [-122.4770, 37.8105], // Fort Point (south side of the Gate)
-  [-122.4640, 37.8060], // Crissy Field
-  [-122.4460, 37.8075], // Marina
-  [-122.4245, 37.8085], // Aquatic Park
-  [-122.4080, 37.8105], // Fisherman's Wharf
-  [-122.3920, 37.7990], // North Beach piers
-  [-122.3870, 37.7950], // Ferry Building
-  [-122.3855, 37.7780], // South Beach
-  [-122.3790, 37.7700], // Mission Bay
-  [-122.3755, 37.7550], // Central Waterfront
-  [-122.3870, 37.7430], // Islais Creek
-  [-122.3580, 37.7290], // Hunters Point
-  [-122.3760, 37.7100], // Candlestick
-  [-122.3900, 37.6960], // south edge
-  [-122.5050, 37.6960], // SW corner
-  [-122.5065, 37.7350], // Fort Funston
-  [-122.5095, 37.7750], // Ocean Beach
-];
+const G = HF_META.grid;
+let elev = null; // Float32Array G×G, meters above sea level, row 0 = north
 
-const MARIN_COAST = [
-  [-122.5520, 37.8150],
-  [-122.5290, 37.8155], // Point Bonita
-  [-122.4900, 37.8265], // Kirby Cove
-  [-122.4775, 37.8255], // Lime Point (north side of the Gate)
-  [-122.4680, 37.8330], // Horseshoe Bay
-  [-122.4770, 37.8530], // Sausalito
-  [-122.4720, 37.8690],
-  [-122.5520, 37.8690],
-];
-
-// hills: lon, lat, summit meters, radius meters
-const HILLS = [
-  [-122.4477, 37.7544, 281, 520], // Twin Peaks
-  [-122.4585, 37.7600, 265, 450], // Mount Sutro
-  [-122.4540, 37.7383, 283, 480], // Mount Davidson
-  [-122.4695, 37.7565, 210, 480], // Golden Gate Heights
-  [-122.4438, 37.7437, 190, 420], // Diamond Heights
-  [-122.4380, 37.7660, 160, 330], // Corona Heights / Buena Vista
-  [-122.4140, 37.7430, 134, 380], // Bernal Heights
-  [-122.3995, 37.7590, 90, 480],  // Potrero Hill
-  [-122.4190, 37.7190, 150, 700], // McLaren ridge
-  [-122.4194, 37.8010, 88, 300],  // Russian Hill
-  [-122.4130, 37.7925, 100, 330], // Nob Hill
-  [-122.4058, 37.8020, 84, 200],  // Telegraph Hill
-  [-122.4400, 37.7918, 105, 520], // Pacific Heights
-  [-122.4525, 37.7780, 88, 380],  // Lone Mountain / USF
-  [-122.4655, 37.7935, 95, 550],  // Presidio hills
-  [-122.5060, 37.7830, 95, 480],  // Lands End bluffs
-  // Marin
-  [-122.4995, 37.8265, 240, 800],
-  [-122.5230, 37.8330, 290, 900],
-  [-122.4870, 37.8430, 230, 700],
-  [-122.4790, 37.8560, 220, 800],
-  [-122.5150, 37.8620, 280, 1000],
-];
-
-// islands rise from the bay on their own: lon, lat, meters, radius m, flatten
-const ISLANDS = [
-  [-122.4230, 37.8267, 41, 170, 1.0],   // Alcatraz
-  [-122.4310, 37.8620, 230, 620, 1.0],  // Angel Island
-  [-122.3640, 37.8090, 100, 280, 1.0],  // Yerba Buena
-  [-122.3705, 37.8230, 8, 380, 0.25],   // Treasure Island (flat pancake)
-];
-
-// parks (lon0, lat0, lon1, lat1, gets trees)
-const PARKS = [
-  [-122.5110, 37.7655, -122.4540, 37.7737, true],  // Golden Gate Park
-  [-122.4790, 37.7870, -122.4450, 37.8060, true],  // Presidio
-  [-122.4300, 37.7140, -122.4050, 37.7250, true],  // McLaren
-  [-122.4970, 37.7050, -122.4790, 37.7300, false], // Lake Merced / Fort Funston
-  [-122.4545, 37.7715, -122.4370, 37.7737, true],  // the Panhandle
-  [-122.4278, 37.7578, -122.4248, 37.7620, false], // Dolores Park
-  [-122.4415, 37.7660, -122.4355, 37.7700, true],  // Buena Vista
-  [-122.4440, 37.7350, -122.4390, 37.7455, true],  // Glen Canyon
-  [-122.4770, 37.7350, -122.4590, 37.7385, true],  // Stern Grove
-];
-
-// precomputed world-space versions
-const sfPoly = SF_COAST.map(p => W(p[0], p[1]));
-const marinPoly = MARIN_COAST.map(p => W(p[0], p[1]));
-const hillsW = HILLS.map(h => ({ x: W(h[0], h[1])[0], z: W(h[0], h[1])[1], h: hU(h[2]), r: h[3] / 100 }));
-const islesW = ISLANDS.map(h => ({ x: W(h[0], h[1])[0], z: W(h[0], h[1])[1], h: hU(h[2]), r: h[3] / 100, f: h[4] }));
-const parksW = PARKS.map(p => {
-  const a = W(p[0], p[1]), b = W(p[2], p[3]);
-  return {
-    x0: Math.min(a[0], b[0]), x1: Math.max(a[0], b[0]),
-    z0: Math.min(a[1], b[1]), z1: Math.max(a[1], b[1]),
-    trees: p[4],
-  };
-});
-
-// signed distance to polygon: positive inside, in world units
-function polySDF(pts, x, z) {
-  let d2 = Infinity, inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const xi = pts[i][0], zi = pts[i][1], xj = pts[j][0], zj = pts[j][1];
-    const ex = xj - xi, ez = zj - zi;
-    const t = Math.max(0, Math.min(1, ((x - xi) * ex + (z - zi) * ez) / (ex * ex + ez * ez)));
-    const dx = x - (xi + ex * t), dz = z - (zi + ez * t);
-    const dd = dx * dx + dz * dz;
-    if (dd < d2) d2 = dd;
-    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+export async function loadTerrainData() {
+  const img = new Image();
+  img.src = new URL('./data/heightmap.png', import.meta.url).href;
+  await img.decode();
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = G;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const px = ctx.getImageData(0, 0, G, G).data;
+  elev = new Float32Array(G * G);
+  for (let i = 0; i < G * G; i++) {
+    elev[i] = (px[i * 4] * 256 + px[i * 4 + 1] - HF_META.off) / HF_META.scale;
   }
-  const d = Math.sqrt(d2);
-  return inside ? d : -d;
 }
 
-function smoothstep(a, b, x) {
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
+// world x/z → fractional heightfield coords (grid is lon/lat aligned over REGION)
+const GXK = (G - 1) / ((REGION.lonE - REGION.lonW) * KM_LON * UPK);
+const GYK = (G - 1) / ((REGION.latN - REGION.latS) * KM_LAT * UPK);
+const GX0 = (C_LON - REGION.lonW) * KM_LON * UPK * GXK;
+const GY0 = (REGION.latN - C_LAT) * KM_LAT * UPK * GYK;
+
+// meters above sea level at a world (x, z), bilinear
+export function elevM(x, z) {
+  const gx = Math.min(G - 1.001, Math.max(0, GX0 + x * GXK));
+  const gy = Math.min(G - 1.001, Math.max(0, GY0 + z * GYK));
+  const ix = gx | 0, iy = gy | 0;
+  const fx = gx - ix, fy = gy - iy;
+  const i = iy * G + ix;
+  const a = elev[i] + (elev[i + 1] - elev[i]) * fx;
+  const b = elev[i + G] + (elev[i + G + 1] - elev[i + G]) * fx;
+  return a + (b - a) * fy;
 }
 
-export function landSDF(x, z) {
-  return Math.max(polySDF(sfPoly, x, z), polySDF(marinPoly, x, z));
+const isLand = (x, z) => elevM(x, z) > 1.0;
+
+export function heightAt(x, z) {
+  const m = elevM(x, z);
+  if (m > 0) return hU(m);
+  return Math.max(hU(m), -0.5); // real bathymetry, capped so the seabed stays shallow
+}
+
+// ————— real park & lake polygons (OpenStreetMap) —————
+
+function toWorldPoly(poly) {
+  const pts = poly.map((q) => W(q[0], q[1]));
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const [x, z] of pts) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  return { pts, x0, x1, z0, z1 };
+}
+
+const parksW = PARKS.map((p) => ({ ...toWorldPoly(p.poly), trees: p.trees, area: p.area }));
+const watersW = WATERS.map((w) => toWorldPoly(w.poly));
+
+function ptInPoly(pts, x, z) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, zi] = pts[i], [xj, zj] = pts[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 export function inPark(x, z) {
   for (const p of parksW) {
-    if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1) return true;
+    if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1 && ptInPoly(p.pts, x, z)) return true;
   }
   return false;
-}
-
-export function heightAt(x, z) {
-  const sdf = landSDF(x, z);
-  const mask = smoothstep(0, 0.45, sdf);   // steep coast, cliffy
-  let h = 0;
-  if (mask > 0) {
-    h = mask * (0.1 + 0.1 * smoothstep(0, 8, sdf)); // gentle base rise inland
-    for (const k of hillsW) {
-      const dx = x - k.x, dz = z - k.z;
-      h += mask * k.h * Math.exp(-(dx * dx + dz * dz) / (k.r * k.r));
-    }
-  }
-  // islands stand on their own
-  for (const k of islesW) {
-    const dx = x - k.x, dz = z - k.z;
-    const g = Math.exp(-(dx * dx + dz * dz) / (k.r * k.r));
-    const gg = k.f < 0.5 ? Math.min(1, g * 2.2) * k.h : Math.pow(g, 0.8) * k.h;
-    if (gg > h) h = gg;
-  }
-  // ocean floor
-  if (h < 0.02) h = -0.4 + 0.42 * smoothstep(-1.4, 0.4, sdf);
-  return h;
 }
 
 // deterministic pseudo-random
@@ -219,6 +148,11 @@ function tracePoly(ctx, poly) {
   ctx.closePath();
 }
 
+// land character by geography: dry-grass headlands vs. the urban peninsula
+function isGrassland(lon, lat) {
+  return lat > 37.84 || (lat > 37.81 && lon < -122.47);
+}
+
 function groundTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = TEX_SIZE;
@@ -226,84 +160,131 @@ function groundTexture() {
   const rnd = mulberry(7);
   const PXU = TEX_SIZE / PLANE_W; // pixels per world unit (~10 px = 1 km / 10)
 
-  // water
-  ctx.fillStyle = '#24404f';
-  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+  // — base raster straight from the heightfield: water, sand, city, grass —
+  // also build masks so the painterly overlays stay on their own landmass
+  const base = ctx.createImageData(TEX_SIZE, TEX_SIZE);
+  const urbanMaskCv = document.createElement('canvas');
+  const grassMaskCv = document.createElement('canvas');
+  urbanMaskCv.width = urbanMaskCv.height = grassMaskCv.width = grassMaskCv.height = TEX_SIZE;
+  const urbanCtx = urbanMaskCv.getContext('2d');
+  const grassCtx = grassMaskCv.getContext('2d');
+  const urbanMask = urbanCtx.createImageData(TEX_SIZE, TEX_SIZE);
+  const grassMask = grassCtx.createImageData(TEX_SIZE, TEX_SIZE);
 
-  // landmasses
-  tracePoly(ctx, sfPoly);
-  ctx.fillStyle = '#b2ada3';
-  ctx.fill();
-  tracePoly(ctx, marinPoly);
-  ctx.fillStyle = '#8d9663';
-  ctx.fill();
-
-  // Marin gets dry-grass mottling
-  ctx.save();
-  tracePoly(ctx, marinPoly);
-  ctx.clip();
-  for (let i = 0; i < 900; i++) {
-    ctx.fillStyle = rnd() > 0.5 ? 'rgba(120,130,80,0.25)' : 'rgba(160,160,100,0.18)';
-    ctx.fillRect(rnd() * TEX_SIZE, rnd() * TEX_SIZE * 0.45, 4 + rnd() * 14, 3 + rnd() * 10);
+  for (let py = 0; py < TEX_SIZE; py++) {
+    const z = ((py + 0.5) / TEX_SIZE) * PLANE_H - PLANE_H / 2;
+    const lat = C_LAT - z / (KM_LAT * UPK);
+    for (let pxi = 0; pxi < TEX_SIZE; pxi++) {
+      const x = ((pxi + 0.5) / TEX_SIZE) * PLANE_W - PLANE_W / 2;
+      const m = elevM(x, z);
+      const k = (py * TEX_SIZE + pxi) * 4;
+      let r, g, b;
+      if (m <= 0.6) {
+        // water, a touch darker as it deepens
+        const d = Math.min(1, Math.max(0, -m / 40));
+        r = 36 - 8 * d; g = 64 - 12 * d; b = 79 - 12 * d;
+      } else {
+        const lon = x / (KM_LON * UPK) + C_LON;
+        if (isGrassland(lon, lat)) {
+          r = 141; g = 150; b = 99;             // Marin / headlands dry grass
+          grassMask.data[k + 3] = 255;
+        } else if (m < 4.5 && lon < -122.483) {
+          r = 217; g = 199; b = 157;            // Ocean Beach sand strip
+        } else {
+          r = 178; g = 173; b = 163;            // the city itself
+          urbanMask.data[k + 3] = 255;
+        }
+      }
+      base.data[k] = r; base.data[k + 1] = g; base.data[k + 2] = b;
+      base.data[k + 3] = 255;
+    }
   }
-  ctx.restore();
+  ctx.putImageData(base, 0, 0);
+  urbanCtx.putImageData(urbanMask, 0, 0);
+  grassCtx.putImageData(grassMask, 0, 0);
 
-  // everything urban is clipped to the peninsula
+  // a masked painter: draw() onto a scratch layer, keep only the masked part
+  const scratch = document.createElement('canvas');
+  scratch.width = scratch.height = TEX_SIZE;
+  const sctx = scratch.getContext('2d');
+  function masked(maskCv, draw) {
+    sctx.save();
+    sctx.clearRect(0, 0, TEX_SIZE, TEX_SIZE);
+    draw(sctx);
+    sctx.globalCompositeOperation = 'destination-in';
+    sctx.drawImage(maskCv, 0, 0);
+    sctx.restore();
+    ctx.drawImage(scratch, 0, 0);
+  }
+
+  // headlands get dry-grass mottling
+  masked(grassMaskCv, (c) => {
+    for (let i = 0; i < 1600; i++) {
+      c.fillStyle = rnd() > 0.5 ? 'rgba(120,130,80,0.25)' : 'rgba(160,160,100,0.18)';
+      c.fillRect(rnd() * TEX_SIZE, rnd() * TEX_SIZE, 4 + rnd() * 14, 3 + rnd() * 10);
+    }
+  });
+
+  // everything urban is masked to city land
   ctx.save();
-  tracePoly(ctx, sfPoly);
-  ctx.clip();
 
   // block mottling
-  for (let i = 0; i < 5200; i++) {
-    const l = rnd();
-    ctx.fillStyle = l > 0.55 ? 'rgba(255,250,240,0.05)' : 'rgba(70,65,55,0.05)';
-    ctx.fillRect(rnd() * TEX_SIZE, rnd() * TEX_SIZE, 3 + rnd() * 9, 3 + rnd() * 9);
-  }
+  masked(urbanMaskCv, (c) => {
+    for (let i = 0; i < 5200; i++) {
+      const l = rnd();
+      c.fillStyle = l > 0.55 ? 'rgba(255,250,240,0.05)' : 'rgba(70,65,55,0.05)';
+      c.fillRect(rnd() * TEX_SIZE, rnd() * TEX_SIZE, 3 + rnd() * 9, 3 + rnd() * 9);
+    }
+  });
 
-  // street grids
-  ctx.strokeStyle = 'rgba(64,70,74,0.34)';
-  ctx.lineWidth = 1.6;
-  for (const g of GRIDS) {
-    const a0 = texLL(g.b[0], g.b[1]);
-    const a1 = texLL(g.b[2], g.b[3]);
-    const cx = (a0[0] + a1[0]) / 2, cy = (a0[1] + a1[1]) / 2;
-    const hw = Math.abs(a1[0] - a0[0]) / 2, hh = Math.abs(a1[1] - a0[1]) / 2;
-    const ext = Math.hypot(hw, hh);
-    ctx.save();
-    // clip to the (unrotated) district rect, then draw a rotated line family
-    ctx.beginPath();
-    ctx.rect(cx - hw, cy - hh, hw * 2, hh * 2);
-    ctx.clip();
-    ctx.translate(cx, cy);
-    ctx.rotate(g.a);
-    const stepX = g.sx * 10 * PXU, stepZ = g.sz * 10 * PXU;
-    ctx.beginPath();
-    for (let x = -ext; x <= ext; x += stepX) { ctx.moveTo(x, -ext); ctx.lineTo(x, ext); }
-    for (let y = -ext; y <= ext; y += stepZ) { ctx.moveTo(-ext, y); ctx.lineTo(ext, y); }
-    ctx.stroke();
-    ctx.restore();
-  }
+  // street grids + arteries, masked to city land so nothing draws into the bay
+  masked(urbanMaskCv, (c) => {
+    c.strokeStyle = 'rgba(64,70,74,0.34)';
+    c.lineWidth = 1.6;
+    for (const g of GRIDS) {
+      const a0 = texLL(g.b[0], g.b[1]);
+      const a1 = texLL(g.b[2], g.b[3]);
+      const cx = (a0[0] + a1[0]) / 2, cy = (a0[1] + a1[1]) / 2;
+      const hw = Math.abs(a1[0] - a0[0]) / 2, hh = Math.abs(a1[1] - a0[1]) / 2;
+      const ext = Math.hypot(hw, hh);
+      c.save();
+      // clip to the (unrotated) district rect, then draw a rotated line family
+      c.beginPath();
+      c.rect(cx - hw, cy - hh, hw * 2, hh * 2);
+      c.clip();
+      c.translate(cx, cy);
+      c.rotate(g.a);
+      const stepX = g.sx * 10 * PXU, stepZ = g.sz * 10 * PXU;
+      c.beginPath();
+      for (let x = -ext; x <= ext; x += stepX) { c.moveTo(x, -ext); c.lineTo(x, ext); }
+      for (let y = -ext; y <= ext; y += stepZ) { c.moveTo(-ext, y); c.lineTo(ext, y); }
+      c.stroke();
+      c.restore();
+    }
 
-  // arteries
-  ctx.strokeStyle = 'rgba(52,58,62,0.5)';
-  ctx.lineWidth = 3.2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  for (const road of ARTERIES) {
-    ctx.beginPath();
-    road.forEach((p, i) => {
-      const [px, py] = texLL(p[0], p[1]);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    });
-    ctx.stroke();
-  }
+    c.strokeStyle = 'rgba(52,58,62,0.5)';
+    c.lineWidth = 3.2;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    for (const road of ARTERIES) {
+      c.beginPath();
+      road.forEach((p, i) => {
+        const [px, py] = texLL(p[0], p[1]);
+        i === 0 ? c.moveTo(px, py) : c.lineTo(px, py);
+      });
+      c.stroke();
+    }
+  });
 
-  // parks paint over the streets
+  // real park shapes paint over the streets
   for (const p of parksW) {
+    ctx.save();
+    tracePoly(ctx, p.pts);
+    ctx.fillStyle = '#5e7d4f';
+    ctx.fill();
+    ctx.clip();
     const [px0, py0] = texPt(p.x0, p.z0);
     const [px1, py1] = texPt(p.x1, p.z1);
-    ctx.fillStyle = '#5e7d4f';
-    ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
     for (let i = 0; i < (px1 - px0) * (py1 - py0) / 110; i++) {
       ctx.fillStyle = rnd() > 0.5 ? 'rgba(40,70,35,0.35)' : 'rgba(120,150,90,0.3)';
       const r = 1.5 + rnd() * 3;
@@ -311,26 +292,17 @@ function groundTexture() {
       ctx.arc(px0 + rnd() * (px1 - px0), py0 + rnd() * (py1 - py0), r, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
   }
 
-  // Lake Merced is actually a lake
-  {
-    const [cx, cy] = texLL(-122.4885, 37.7185);
+  // lakes (Merced, Stow) are actually lakes
+  for (const w of watersW) {
+    tracePoly(ctx, w.pts);
     ctx.fillStyle = '#2e4a57';
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, 11, 16, 0.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Ocean Beach sand
-  {
-    const [sx0, sy0] = texLL(-122.5125, 37.7890);
-    const [sx1, sy1] = texLL(-122.5030, 37.7060);
-    ctx.fillStyle = '#d9c79d';
-    ctx.fillRect(sx0, sy0, sx1 - sx0, sy1 - sy0);
-  }
-
-  ctx.restore(); // end peninsula clip
+  ctx.restore();
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -341,7 +313,7 @@ function groundTexture() {
 // ————————————————— terrain mesh —————————————————
 
 function buildTerrain() {
-  const RES = 320;
+  const RES = 448; // ~45 m cells, close to the 30 m heightfield resolution
   const geo = new THREE.PlaneGeometry(PLANE_W, PLANE_H, RES, RES);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -398,10 +370,12 @@ function buildBuildings() {
   for (let i = 0; i < TRIES; i++) {
     const x = x0w + rnd() * (x1w - x0w);
     const z = z0w + rnd() * (z1w - z0w);
-    if (polySDF(sfPoly, x, z) < 0.35) continue;
+    // solid land, with a margin: no rowhouses wading into the surf
+    if (elevM(x, z) < 2.5) continue;
+    if (!isLand(x + 0.35, z) || !isLand(x - 0.35, z) || !isLand(x, z + 0.35) || !isLand(x, z - 0.35)) continue;
     if (inPark(x, z)) continue;
     const h = heightAt(x, z);
-    if (h < 0.06 || h > 2.6) continue;
+    if (h < 0.05 || h > 3.9) continue;
     // skip steep slopes
     const s = Math.abs(heightAt(x + 0.4, z) - h) + Math.abs(heightAt(x, z + 0.4) - h);
     if (s > 0.42) continue;
@@ -443,13 +417,20 @@ function buildTrees() {
   const rnd = mulberry(424242);
   const spots = [];
   const treed = parksW.filter(p => p.trees);
-  for (let i = 0; i < 4200 && spots.length < 1700; i++) {
-    const p = treed[(rnd() * treed.length) | 0];
+  // weight park choice by area so Golden Gate Park gets its forest
+  const cum = [];
+  let total = 0;
+  for (const p of treed) { total += p.area; cum.push(total); }
+  for (let i = 0; i < 12000 && spots.length < 1700; i++) {
+    const pick = rnd() * total;
+    let pi = 0;
+    while (cum[pi] < pick) pi++;
+    const p = treed[pi];
     const x = p.x0 + rnd() * (p.x1 - p.x0);
     const z = p.z0 + rnd() * (p.z1 - p.z0);
-    if (landSDF(x, z) < 0.4) continue;
+    if (!ptInPoly(p.pts, x, z)) continue;
+    if (elevM(x, z) < 2) continue;
     const h = heightAt(x, z);
-    if (h < 0.05) continue;
     spots.push({ x, z, h });
   }
   const geo = new THREE.ConeGeometry(0.045, 0.15, 5);
@@ -486,7 +467,7 @@ function buildPiers() {
     const dx = B[0] - A[0], dz = B[1] - A[1];
     const L = Math.hypot(dx, dz);
     let nx = -dz / L, nz = dx / L;
-    if (landSDF(x + nx, z + nz) > 0) { nx = -nx; nz = -nz; }
+    if (isLand(x + nx, z + nz)) { nx = -nx; nz = -nz; }
     const pier = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.045, 0.34), mat);
     pier.position.set(x + nx * 0.16, 0.05, z + nz * 0.16);
     pier.rotation.y = Math.atan2(nx, nz);
@@ -783,7 +764,8 @@ function buildCityLights(buildingPositions, gate) {
 
 // ————————————————— assemble —————————————————
 
-export function buildWorld(scene) {
+export async function buildWorld(scene) {
+  await loadTerrainData();
   const group = new THREE.Group();
   group.add(buildTerrain());
   group.add(buildWater());

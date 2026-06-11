@@ -48,10 +48,28 @@ The fog's horizontal coverage is an analytic model of SF geography: a west
 blanket front, a Golden Gate jet, a ridge-line cap, and an everything-is-gone
 blanket above ~80% intensity.
 
+## Real topography & park data
+
+The terrain is a real USGS heightfield and the parks are true OpenStreetMap
+polygons, baked into static files by `tools/fetch-geodata.mjs`:
+
+- **Elevation** — [AWS Open Data Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
+  (terrarium encoding; USGS 3DEP/NED for the US), resampled to a 640×640 grid
+  over the region and packed into `js/data/heightmap.png` (16-bit in R/G).
+  Coastlines fall out of the elevation for free: land is wherever the DEM
+  rises above the sea.
+- **Parks & lakes** — OpenStreetMap via the Overpass API
+  (© OpenStreetMap contributors, ODbL), simplified and stored in
+  `js/data/geodata.js`.
+
+To regenerate: `cd tools && npm i pngjs && node fetch-geodata.mjs`
+
 ## Files
 
 - `js/geo.js` — lon/lat → world mapping (1 unit = 100 m, heights exaggerated)
-- `js/world.js` — terrain from real hill/coastline data, buildings, bridges, landmarks
+- `js/world.js` — terrain from the USGS heightfield, real park shapes, buildings, bridges, landmarks
+- `js/data/` — baked heightmap + park polygons (generated, see above)
+- `tools/fetch-geodata.mjs` — the one-time data pipeline
 - `js/sky.js` — solar position, sky dome, day/night lighting rig
 - `js/fogpass.js` — the volumetric fog raymarcher + composite
 - `js/weather.js` — Open-Meteo ingestion, climatology fallback, Karl's narration
