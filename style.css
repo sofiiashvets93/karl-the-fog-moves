@@ -202,6 +202,21 @@ body::after {
 .ghost-btn:hover { background: var(--ink); color: var(--paper-solid); border-color: var(--ink); }
 .ghost-btn.on { background: var(--orange); border-color: var(--orange); color: #fff; }
 
+.credit {
+  margin-top: 7px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.credit a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid var(--orange);
+  transition: color 0.15s;
+}
+.credit a:hover { color: var(--orange); }
+
 #foghorn { margin-top: 12px; }
 
 /* ——— caption, bottom-left ——— */

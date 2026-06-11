@@ -1,6 +1,8 @@
 # 🌁 Karl — the San Francisco Fog, live in 3-D
 
-**Live: [karl-the-fog-moves.vercel.app](https://karl-the-fog-moves.vercel.app)**
+**Live: [karlthefog.site](https://karlthefog.site)**
+
+Created by [Sofiia Shvets](https://sofiiashvets.com/).
 
 A volumetric simulation of Karl the Fog rolling in and out of San Francisco,
 on a stylized 3-D map of the city — built to show visiting friends why the
