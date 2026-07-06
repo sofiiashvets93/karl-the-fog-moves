@@ -153,6 +153,19 @@ function isGrassland(lon, lat) {
   return lat > 37.84 || (lat > 37.81 && lon < -122.47);
 }
 
+// hillshade: relief shading from the heightfield, light out of the northwest
+function shadeAt(x, z) {
+  const e = 0.35;   // sample offset in world units (~35 m)
+  const boost = 6;  // relief exaggeration, shading only
+  const sx = ((elevM(x + e, z) - elevM(x - e, z)) / (2 * e * 100)) * boost;
+  const sz = ((elevM(x, z + e) - elevM(x, z - e)) / (2 * e * 100)) * boost;
+  let nx = -sx, ny = 1, nz = -sz;
+  const L = Math.hypot(nx, ny, nz);
+  nx /= L; ny /= L; nz /= L;
+  const d = nx * -0.45 + ny * 0.78 + nz * -0.43; // light from the NW, fairly high
+  return 0.55 + 0.45 * Math.max(0, d);           // flat ground ≈ 0.90
+}
+
 function groundTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = TEX_SIZE;
@@ -180,9 +193,12 @@ function groundTexture() {
       const k = (py * TEX_SIZE + pxi) * 4;
       let r, g, b;
       if (m <= 0.6) {
-        // water, a touch darker as it deepens
+        // water, a touch darker as it deepens, teal in the shallows
         const d = Math.min(1, Math.max(0, -m / 40));
-        r = 36 - 8 * d; g = 64 - 12 * d; b = 79 - 12 * d;
+        const sh = Math.min(1, Math.max(0, (m + 3.5) / 4.1)); // shallow near shore
+        r = 36 - 8 * d + 14 * sh; g = 64 - 12 * d + 16 * sh; b = 79 - 12 * d + 12 * sh;
+        // a whisper of surf right at the waterline
+        if (m > -1.2) { const f = (m + 1.2) / 1.8; r += 46 * f; g += 44 * f; b += 38 * f; }
       } else {
         const lon = x / (KM_LON * UPK) + C_LON;
         if (isGrassland(lon, lat)) {
@@ -194,6 +210,9 @@ function groundTexture() {
           r = 178; g = 173; b = 163;            // the city itself
           urbanMask.data[k + 3] = 255;
         }
+        // baked relief shading so the hills read even in flat light
+        const s = shadeAt(x, z);
+        r *= s; g *= s; b *= s;
       }
       base.data[k] = r; base.data[k + 1] = g; base.data[k + 2] = b;
       base.data[k + 3] = 255;
@@ -324,20 +343,120 @@ function buildTerrain() {
 
   const mat = new THREE.MeshStandardMaterial({
     map: groundTexture(),
-    flatShading: true,
     roughness: 1.0,
     metalness: 0.0,
   });
-  return new THREE.Mesh(geo, mat);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  mesh.castShadow = true;
+  return mesh;
 }
+
+// ————————————————— ocean —————————————————
+// A live water surface: drifting wave normals, Fresnel toward the sky,
+// and a glitter path under the sun. Normals are shaded per-pixel; the
+// mesh itself stays a flat disc.
+
+const waterVert = /* glsl */`
+  varying vec3 vWorld;
+  varying float vFogDepth;
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorld = wp.xyz;
+    vec4 mv = viewMatrix * wp;
+    vFogDepth = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const waterFrag = /* glsl */`
+  precision highp float;
+  varying vec3 vWorld;
+  varying float vFogDepth;
+
+  uniform vec3 uCamPos;
+  uniform vec3 uSunDir;
+  uniform vec3 uSunCol;
+  uniform vec3 uSkyHor;
+  uniform vec3 uSkyZen;
+  uniform float uDayF;
+  uniform float uTime;
+  uniform vec3 fogColor;
+  uniform float fogDensity;
+
+  float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+  float vnoise(vec2 x) {
+    vec2 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash12(i), hash12(i + vec2(1, 0)), f.x),
+               mix(hash12(i + vec2(0, 1)), hash12(i + vec2(1, 1)), f.x), f.y);
+  }
+  float waveH(vec2 p, float t) {
+    float h = 0.0;
+    h += vnoise(p * 0.45 + vec2(t * 0.045, t * 0.018)) * 0.60;
+    h += vnoise(p * 1.45 + vec2(-t * 0.085, t * 0.040)) * 0.30;
+    h += vnoise(p * 4.30 + vec2(t * 0.150, -t * 0.070)) * 0.10;
+    return h;
+  }
+
+  void main() {
+    vec3 V = normalize(uCamPos - vWorld);
+    float dist = length(uCamPos - vWorld);
+
+    // wave normal, detail fading with distance so the horizon stays calm
+    float k = clamp(60.0 / (dist + 8.0), 0.12, 1.0);
+    float e = 0.30;
+    vec2 p = vWorld.xz;
+    float h0 = waveH(p, uTime);
+    float hx = waveH(p + vec2(e, 0.0), uTime);
+    float hz = waveH(p + vec2(0.0, e), uTime);
+    vec3 N = normalize(vec3(-(hx - h0) / e * 0.40 * k, 1.0, -(hz - h0) / e * 0.40 * k));
+
+    // base color: deep sea toward straight-down looks, sky toward grazing
+    vec3 deepDay   = vec3(0.075, 0.145, 0.185);
+    vec3 deepNight = vec3(0.010, 0.018, 0.032);
+    vec3 deep = mix(deepNight, deepDay, uDayF) * (0.9 + 0.2 * h0);
+
+    float fres = 0.035 + 0.965 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
+    vec3 skyRef = mix(uSkyHor, uSkyZen, 0.35);
+    vec3 col = mix(deep, skyRef, fres * 0.85);
+
+    // sun glitter path
+    vec3 R = reflect(-V, N);
+    float sunUp = smoothstep(-0.04, 0.05, uSunDir.y);
+    float glint = pow(max(dot(R, uSunDir), 0.0), 640.0) * 6.0
+                + pow(max(dot(R, uSunDir), 0.0), 48.0) * 0.35;
+    col += uSunCol * glint * sunUp;
+
+    // aerial perspective (matches the scene's FogExp2)
+    float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+    col = mix(col, fogColor, fogFactor);
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
 
 function buildWater() {
   const geo = new THREE.CircleGeometry(900, 48);
   geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshStandardMaterial({
-    color: '#26404f',
-    roughness: 0.32,
-    metalness: 0.12,
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: waterVert,
+    fragmentShader: waterFrag,
+    uniforms: {
+      uCamPos: { value: new THREE.Vector3() },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uSunCol: { value: new THREE.Color('#fff3e0') },
+      uSkyHor: { value: new THREE.Color('#c9d5dd') },
+      uSkyZen: { value: new THREE.Color('#4d80b8') },
+      uDayF: { value: 1 },
+      uTime: { value: 0 },
+      fogColor: { value: new THREE.Color('#aebdc9') },
+      fogDensity: { value: 0.00055 },
+    },
   });
   const m = new THREE.Mesh(geo, mat);
   m.position.y = 0.02;
@@ -408,6 +527,8 @@ function buildBuildings() {
     mesh.setColorAt(i, col);
   }
   mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   return { mesh, positions };
 }
 
@@ -449,6 +570,7 @@ function buildTrees() {
     col.setHSL(0.29 + rnd() * 0.05, 0.32, 0.2 + rnd() * 0.1);
     mesh.setColorAt(i, col);
   }
+  mesh.castShadow = true;
   return mesh;
 }
 
@@ -768,21 +890,28 @@ export async function buildWorld(scene) {
   await loadTerrainData();
   const group = new THREE.Group();
   group.add(buildTerrain());
-  group.add(buildWater());
+  const water = buildWater();
+  group.add(water);
 
   const { mesh: buildings, positions } = buildBuildings();
   group.add(buildings);
 
   const gate = buildGoldenGate();
   group.add(gate.group);
-  group.add(buildBayBridge());
-  group.add(buildLandmarks());
+  const bay = buildBayBridge();
+  group.add(bay);
+  const landmarks = buildLandmarks();
+  group.add(landmarks);
   group.add(buildTrees());
   group.add(buildPiers());
+
+  for (const g of [gate.group, bay, landmarks]) {
+    g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  }
 
   const lights = buildCityLights(positions, gate);
   group.add(lights);
 
   scene.add(group);
-  return { group, cityLights: lights };
+  return { group, cityLights: lights, water };
 }

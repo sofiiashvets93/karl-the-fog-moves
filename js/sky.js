@@ -52,31 +52,45 @@ const skyFrag = /* glsl */`
     vec3 dir = normalize(vWorld - uCamPos);
     float ele = dir.y;
 
-    vec3 dayZen  = vec3(0.30, 0.50, 0.72);
-    vec3 dayHor  = vec3(0.78, 0.84, 0.88);
-    vec3 nightZen = vec3(0.012, 0.022, 0.045);
-    vec3 nightHor = vec3(0.05, 0.075, 0.11);
+    // three-stop gradient: horizon haze, mid sky, zenith
+    vec3 dayZen = vec3(0.16, 0.35, 0.64);
+    vec3 dayMid = vec3(0.50, 0.65, 0.80);
+    vec3 dayHor = vec3(0.83, 0.87, 0.89);
+    vec3 nightZen = vec3(0.008, 0.014, 0.032);
+    vec3 nightMid = vec3(0.020, 0.032, 0.060);
+    vec3 nightHor = vec3(0.050, 0.070, 0.105);
 
     vec3 zen = mix(nightZen, dayZen, uDayF);
+    vec3 mid = mix(nightMid, dayMid, uDayF);
     vec3 hor = mix(nightHor, dayHor, uDayF);
-    vec3 col = mix(zen, hor, pow(1.0 - max(ele, 0.0), 1.7));
+    vec3 col = mix(hor, mid, smoothstep(0.0, 0.14, ele));
+    col = mix(col, zen, smoothstep(0.10, 0.62, ele));
 
-    // sunset band toward the sun
     vec3 sunH = normalize(vec3(uSunDir.x, 0.0, uSunDir.z));
     float toward = max(dot(normalize(vec3(dir.x, 0.0, dir.z)), sunH), 0.0);
-    float band = pow(toward, 3.0) * pow(1.0 - abs(ele), 4.0) * uDuskF;
-    col += vec3(0.95, 0.42, 0.15) * band * 0.85;
 
-    // sun disc + halo
+    // daytime warm haze pooling around the sun's side of the horizon
+    col += vec3(0.30, 0.24, 0.16) * pow(toward, 2.0) * pow(1.0 - max(ele, 0.0), 6.0) * uDayF * 0.5;
+
+    // dusk: fire toward the sun, a violet counter-glow opposite
+    float lowBand = pow(1.0 - abs(ele), 5.0);
+    col += vec3(0.98, 0.42, 0.14) * pow(toward, 2.6) * lowBand * uDuskF * 1.05;
+    col += vec3(0.99, 0.62, 0.30) * pow(toward, 8.0) * lowBand * uDuskF * 0.85;
+    col += vec3(0.38, 0.26, 0.44) * pow(1.0 - toward, 2.0) * pow(1.0 - abs(ele), 6.5) * uDuskF * 0.30;
+
+    // sun disc + layered halo
     float s = max(dot(dir, uSunDir), 0.0);
-    col += uSunCol * (pow(s, 1100.0) * 6.0 + pow(s, 24.0) * 0.16) * smoothstep(-0.06, 0.02, uSunDir.y);
+    float sunUp = smoothstep(-0.06, 0.02, uSunDir.y);
+    col += uSunCol * (pow(s, 1100.0) * 6.0 + pow(s, 80.0) * 0.35 + pow(s, 10.0) * 0.10) * sunUp;
 
-    // stars
+    // stars: round points, not lit grid cells
     float night = 1.0 - uDayF;
     if (night > 0.35 && ele > 0.02) {
-      vec3 sp = floor(dir * 220.0);
-      float h = hash(sp);
-      float star = step(0.9965, h) * (0.4 + 0.6 * hash(sp + 1.7));
+      vec3 sp = dir * 220.0;
+      vec3 cell = floor(sp);
+      float h = hash(cell);
+      float d = length(fract(sp) - 0.5);
+      float star = step(0.9945, h) * smoothstep(0.32, 0.04, d) * (0.35 + 0.65 * hash(cell + 1.7));
       col += vec3(star) * night * smoothstep(0.02, 0.2, ele);
     }
 
@@ -106,6 +120,15 @@ export class SkyRig {
     scene.add(this.dome);
 
     this.sun = new THREE.DirectionalLight('#ffffff', 3);
+    this.sun.castShadow = true;
+    const sh = this.sun.shadow;
+    sh.mapSize.set(2048, 2048);
+    sh.camera.near = 220;
+    sh.camera.far = 900;
+    sh.camera.left = -130; sh.camera.right = 130;
+    sh.camera.top = 130; sh.camera.bottom = -130;
+    sh.bias = -0.0004;
+    sh.normalBias = 0.12;
     scene.add(this.sun);
     scene.add(this.sun.target);
 
@@ -120,6 +143,8 @@ export class SkyRig {
 
     this._sunCol = new THREE.Color();
     this._fogAmb = new THREE.Color();
+    this._skyHor = new THREE.Color();
+    this._skyZen = new THREE.Color();
     this._tmpA = new THREE.Color();
     this._tmpB = new THREE.Color();
   }
@@ -151,12 +176,18 @@ export class SkyRig {
     this.hemi.intensity = 0.34 + 0.55 * dayF;
     this.amb.intensity = 0.06 + 0.3 * (1 - dayF); // a little moonlight
 
-    // ambient color the fog volume scatters
+    // ambient color the fog volume scatters — barely warmed at dusk;
+    // dense fog saturates to this color, and too much warmth reads as mud
     this._fogAmb.set('#141c26').lerp(this._tmpA.set('#cfd8de'), dayF);
-    this._fogAmb.lerp(this._tmpA.set('#e8a268'), duskF * 0.35);
+    this._fogAmb.lerp(this._tmpA.set('#dfa878'), duskF * 0.16);
 
     // aerial perspective tint follows the sky
     this.fog.color.copy(this._tmpA.set('#10161e').lerp(this._tmpB.set('#aebdc9'), dayF));
+
+    // sky colors the water reflects (match the dome shader's stops)
+    this._skyHor.set('#0d1219').lerp(this._tmpA.set('#d4dee3'), dayF);
+    this._skyHor.lerp(this._tmpA.set('#e89050'), duskF * 0.4);
+    this._skyZen.set('#020408').lerp(this._tmpA.set('#2959a3'), dayF);
 
     return {
       sunDir: dir,
@@ -166,6 +197,10 @@ export class SkyRig {
       nightF,
       fogAmb: this._fogAmb,
       sunCol: this._sunCol,
+      skyHor: this._skyHor,
+      skyZen: this._skyZen,
+      fogColor: this.fog.color,
+      fogDensity: this.fog.density,
     };
   }
 }

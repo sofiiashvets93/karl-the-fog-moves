@@ -24,7 +24,7 @@ export class UI {
     this._resizeChart();
     window.addEventListener('resize', () => this._resizeChart());
 
-    $('date-chip').textContent = FMT_DAY.format(new Date()).toUpperCase();
+    $('date-chip').textContent = FMT_DAY.format(new Date());
     this._modeChip();
     $('live-chip').style.cursor = 'pointer';
     $('live-chip').title = 'Toggle between the real forecast and a textbook Karl day';
@@ -37,14 +37,14 @@ export class UI {
   _modeChip() {
     const w = this.weather;
     if (w.classic) {
-      $('live-chip-text').textContent = 'CLASSIC KARL';
-      $('data-src').textContent = 'textbook fog-season day · tap LIVE to go back';
+      $('live-chip-text').textContent = 'Classic Karl';
+      $('data-src').textContent = 'a textbook fog-season day — tap the chip to go back live';
     } else if (w.live) {
-      $('live-chip-text').textContent = 'LIVE';
-      $('data-src').textContent = 'marine forecast: open-meteo · tap for classic karl';
+      $('live-chip-text').textContent = 'Live';
+      $('data-src').textContent = 'marine forecast from Open-Meteo — tap the chip for a classic Karl day';
     } else {
-      $('live-chip-text').textContent = 'MODEL';
-      $('data-src').textContent = 'offline · climatological model';
+      $('live-chip-text').textContent = 'Model';
+      $('data-src').textContent = 'offline — playing the climatological model';
     }
   }
 
@@ -190,6 +190,16 @@ export class UI {
     const padB = 14 * dpr;
     const plotH = H - padB;
 
+    // night, shaded so the diurnal rhythm reads at a glance
+    ctx.fillStyle = 'rgba(22,34,44,0.06)';
+    let dark = sunPosition(new Date(t0)).elev < 0;
+    let segStart = t0;
+    for (const m of this._sunMarkers()) {
+      if (m.rise && dark) { ctx.fillRect(X(segStart), 0, X(m.t) - X(segStart), plotH); dark = false; }
+      else if (!m.rise && !dark) { dark = true; segStart = m.t; }
+    }
+    if (dark) ctx.fillRect(X(segStart), 0, X(t1) - X(segStart), plotH);
+
     // hour grid + labels
     ctx.font = `${8.5 * dpr}px "Spline Sans Mono", monospace`;
     ctx.fillStyle = 'rgba(22,34,44,0.45)';
@@ -230,7 +240,10 @@ export class UI {
     }
     ctx.lineTo(W, plotH);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(22,34,44,0.13)';
+    const grad = ctx.createLinearGradient(0, 0, 0, plotH);
+    grad.addColorStop(0, 'rgba(22,34,44,0.22)');
+    grad.addColorStop(1, 'rgba(22,34,44,0.04)');
+    ctx.fillStyle = grad;
     ctx.fill();
 
     ctx.beginPath();

@@ -143,8 +143,10 @@ const fogFrag = /* glsl */`
     float prevT = 0.0;
 
     float mu = dot(rd, uSunDir);
-    // Henyey–Greenstein-ish forward scattering, g = 0.5
-    float phase = 0.7 * (1.0 - 0.25) / pow(1.0 + 0.25 - 1.0 * mu, 1.5) * 0.25 + 0.18;
+    // two-lobe phase: a strong forward peak (silver lining looking sunward)
+    // over a soft isotropic floor
+    float phase = 0.16 + 0.55 / pow(1.25 - 1.0 * mu, 1.5) * 0.25
+                + 1.6 * pow(max(mu, 0.0), 12.0);
 
     for (int i = 0; i < N; i++) {
       float fi = (float(i) + j) / float(N);
@@ -160,13 +162,18 @@ const fogFrag = /* glsl */`
         float sh = exp(-uDensity * 0.30 * clamp(uFogTop - p.y, 0.0, uFogTop) / max(uSunDir.y, 0.12));
         sh = max(sh, 0.05);
 
-        vec3 src = uFogAmb * 0.85 + uSunCol * phase * sh * max(uSunDir.y + 0.06, 0.0) * 1.35;
+        // fog tops catch the sky, the base sits in its own shadow —
+        // slightly cool in the depths, bright where the sun reaches
+        float hh = clamp(p.y / max(uFogTop, 0.001), 0.0, 1.0);
+        vec3 amb = uFogAmb * (0.68 + 0.42 * hh) * mix(vec3(0.93, 0.97, 1.05), vec3(1.0), hh);
+        vec3 src = amb + uSunCol * phase * sh * max(uSunDir.y + 0.06, 0.0) * 1.35;
 
-        // city glow seeping up through Karl at night
+        // city glow seeping up through Karl at night — a pool over downtown,
+        // not a wash over the whole basin
         if (uGlowK > 0.002) {
           vec2 dkm = p.xz * 0.1 - uDowntownKm;
-          float glow = exp(-dot(dkm, dkm) / 14.0) * exp(-max(p.y, 0.0) * 0.45);
-          src += vec3(1.0, 0.55, 0.25) * glow * uGlowK * 2.2;
+          float glow = exp(-dot(dkm, dkm) / 9.0) * exp(-max(p.y, 0.0) * 0.55);
+          src += vec3(1.0, 0.58, 0.28) * glow * uGlowK * 1.5;
         }
 
         float a = exp(-sig * dt);
@@ -186,6 +193,10 @@ const compositeFrag = /* glsl */`
   uniform sampler2D tScene;
   uniform sampler2D tFog;
   uniform float uTime;
+  uniform vec2 uSunScreen;   // sun position in uv space
+  uniform float uSunVis;     // 0..1 sun on screen & above horizon
+  uniform vec3 uGlareCol;
+  uniform float uAspect;
 
   vec3 aces(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
@@ -196,7 +207,20 @@ const compositeFrag = /* glsl */`
     vec4 fog = texture2D(tFog, vUv);
     vec3 col = scene * fog.a + fog.rgb;
 
+    // soft lens glare around the sun
+    if (uSunVis > 0.002) {
+      vec2 d = (vUv - uSunScreen) * vec2(uAspect, 1.0);
+      float r = length(d);
+      float glare = exp(-r * 3.4) * 0.16 + exp(-r * 14.0) * 0.22;
+      col += uGlareCol * glare * uSunVis;
+    }
+
     col = aces(col * 1.05);
+
+    // gentle filmic saturation lift
+    float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    col = mix(vec3(luma), col, 1.06);
+
     col = pow(col, vec3(1.0 / 2.2));
 
     // gentle vignette
@@ -276,6 +300,10 @@ export class FogPipeline {
       tScene: { value: this.sceneRT.texture },
       tFog: { value: this.fogRT.texture },
       uTime: { value: 0 },
+      uSunScreen: { value: new THREE.Vector2(0.5, 0.5) },
+      uSunVis: { value: 0 },
+      uGlareCol: { value: new THREE.Color('#ffdcb0') },
+      uAspect: { value: w / Math.max(1, h) },
     };
 
     const tri = fullscreenTriangle();
@@ -304,6 +332,7 @@ export class FogPipeline {
     const W2 = Math.floor(w * pr), H2 = Math.floor(h * pr);
     this.sceneRT.setSize(W2, H2);
     this.fogRT.setSize(Math.max(2, Math.floor(W2 / 2)), Math.max(2, Math.floor(H2 / 2)));
+    this.compUniforms.uAspect.value = W2 / Math.max(1, H2);
   }
 
   render(scene, camera, time) {

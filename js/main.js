@@ -23,6 +23,11 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NoToneMapping; // the composite pass tone-maps
 
+// real sun shadows; a lighter map on touch devices
+const coarse = window.matchMedia('(pointer: coarse)').matches;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 5200);
 
@@ -74,7 +79,8 @@ document.querySelectorAll('#views button').forEach((b) => {
 
 // ————— build the world —————
 const sky = new SkyRig(scene);
-const { cityLights } = await buildWorld(scene); // loads the baked USGS heightfield
+if (coarse) sky.sun.shadow.mapSize.set(1024, 1024);
+const { cityLights, water } = await buildWorld(scene); // loads the baked USGS heightfield
 const fogPipe = new FogPipeline(renderer);
 
 // ————— simulation clock —————
@@ -92,8 +98,9 @@ const weather = new Weather();
 let ui = null;
 
 weather.load().then(() => {
-  ui = new UI(sim, weather);
+  // unhide before the UI measures its chart canvas — a hidden canvas measures 0×0
   document.getElementById('hud').classList.remove('hidden');
+  ui = new UI(sim, weather);
   document.getElementById('loading').classList.add('gone');
   setTimeout(() => document.getElementById('loading').remove(), 1100);
 });
@@ -116,6 +123,7 @@ window.addEventListener('resize', () => {
 
 // ————— main loop —————
 const clock = new THREE.Clock();
+const sunNDC = new THREE.Vector3();
 let noiseT = 0;
 
 function frame() {
@@ -147,6 +155,29 @@ function frame() {
   const skyState = sky.update(new Date(sim.t), camera);
   cityLights.material.opacity = skyState.nightF * 0.95;
   smooth.glow = ease(smooth.glow, skyState.nightF * Math.min(smooth.I * 1.4, 1), dt);
+
+  // feed the ocean
+  const wu = water.material.uniforms;
+  wu.uTime.value = elapsed;
+  wu.uCamPos.value.copy(camera.position);
+  wu.uSunDir.value.copy(skyState.sunDir);
+  wu.uSunCol.value.copy(skyState.sunCol);
+  wu.uSkyHor.value.copy(skyState.skyHor);
+  wu.uSkyZen.value.copy(skyState.skyZen);
+  wu.uDayF.value = skyState.dayF;
+  wu.fogColor.value.copy(skyState.fogColor);
+  wu.fogDensity.value = skyState.fogDensity;
+
+  // project the sun for the composite's lens glare
+  sunNDC.copy(skyState.sunDir).multiplyScalar(200).add(camera.position).project(camera);
+  const behind = sunNDC.z > 1;
+  const onScreen = !behind && Math.abs(sunNDC.x) < 1.35 && Math.abs(sunNDC.y) < 1.35;
+  const cu = fogPipe.compUniforms;
+  cu.uSunScreen.value.set(sunNDC.x * 0.5 + 0.5, sunNDC.y * 0.5 + 0.5);
+  cu.uSunVis.value = onScreen
+    ? THREE.MathUtils.smoothstep(skyState.elev, -4, 4) * (0.35 + 0.65 * skyState.duskF)
+    : 0;
+  cu.uGlareCol.value.copy(skyState.sunCol);
 
   // feed the fog
   const u = fogPipe.fogUniforms;
