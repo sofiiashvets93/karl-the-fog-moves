@@ -1,211 +1,360 @@
-// Karl — the San Francisco Fog. Boot, simulation clock, render loop.
+// Karl — the San Francisco fog. Boot, simulation clock, quality, render loop.
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { W, hU } from './geo.js';
-import { buildWorld } from './world.js';
+import { AssetLoader } from './assets.js';
+import { World } from './world.js';
 import { SkyRig } from './sky.js';
-import { FogPipeline } from './fogpass.js';
+import { Pipeline } from './fogpass.js';
+import { FogField, noiseVolume } from './fogfield.js';
 import { Weather } from './weather.js';
+import { CameraRig } from './camera.js';
 import { UI } from './ui.js';
 
+const params = new URLSearchParams(location.search);
+const STILL = params.has('still');            // render on demand only (testing)
 const canvas = document.getElementById('scene');
+const ui = new UI();
 
+// ————— renderer —————
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  if (!renderer.getContext().getParameter) throw new Error('no gl');
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
+  if (!renderer.capabilities.isWebGL2) throw new Error('WebGL2 required');
 } catch (e) {
-  document.getElementById('webgl-fail').classList.remove('hidden');
+  ui.fatal('This map needs WebGL 2, which this browser or device does not provide. A recent Chrome, Edge, Firefox or Safari will work.');
   throw e;
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping = THREE.NoToneMapping; // the composite pass tone-maps
-
-// real sun shadows; a lighter map on touch devices
-const coarse = window.matchMedia('(pointer: coarse)').matches;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // the composite pass encodes sRGB
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;   // re-rendered only when something it depends on changes
+
+// ————— quality tiers —————
+const coarse = matchMedia('(pointer: coarse)').matches;
+const small = Math.min(screen.width, screen.height) < 820;
+const TIERS = {
+  low: { pr: 1.0, fog: 0.33, steps: 22, shadow: 1024, msaa: 0, bloom: false, lod: 0.55 },
+  medium: { pr: 1.25, fog: 0.42, steps: 30, shadow: 2048, msaa: 2, bloom: true, lod: 0.8 },
+  high: { pr: 1.6, fog: 0.5, steps: 40, shadow: 4096, msaa: 4, bloom: true, lod: 1.0 },
+};
+const ORDER = ['low', 'medium', 'high'];
+let tierName = params.get('q') || (coarse || small ? 'low' : 'medium');
+if (!TIERS[tierName]) tierName = 'medium';
+let tier = TIERS[tierName];
+
+function pixelRatio() { return Math.min(window.devicePixelRatio || 1, tier.pr); }
+renderer.setPixelRatio(pixelRatio());
+renderer.setSize(window.innerWidth, window.innerHeight, false);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 5200);
-
-// ————— camera viewpoints —————
-const gateW = W(-122.4780, 37.8190);
-const twinW = W(-122.4477, 37.7544);
-const dtW = W(-122.3985, 37.7905);
-
-const VIEWS = {
-  ocean:    { pos: [-118, 34, 64], tgt: [0, 2, -14] },
-  gate:     { pos: [gateW[0] - 6, 3.4, gateW[1] + 7], tgt: [gateW[0] + 2, 2.8, gateW[1] - 4] },
-  downtown: { pos: [dtW[0] + 48, 14, dtW[1] - 26], tgt: [dtW[0] - 14, 2, dtW[1] + 6] },
-  above:    { pos: [twinW[0] + 14, 95, twinW[1] + 60], tgt: [twinW[0], 0, twinW[1] - 18] },
-};
-
-camera.position.set(...VIEWS.ocean.pos);
-
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(...VIEWS.ocean.tgt);
-controls.enableDamping = true;
-controls.dampingFactor = 0.06;
-controls.maxPolarAngle = Math.PI * 0.49;
-controls.minDistance = 6;
-controls.maxDistance = 420;
-controls.autoRotate = true;
-controls.autoRotateSpeed = -0.22;
-canvas.addEventListener('pointerdown', () => { controls.autoRotate = false; }, { once: true });
-
-// camera fly-to tween
-let camTween = null;
-function flyTo(view) {
-  camTween = {
-    p0: camera.position.clone(),
-    t0: controls.target.clone(),
-    p1: new THREE.Vector3(...view.pos),
-    t1: new THREE.Vector3(...view.tgt),
-    k: 0,
-  };
-  controls.autoRotate = false;
-}
-
-document.querySelectorAll('#views button').forEach((b) => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('#views button').forEach((x) => x.classList.remove('on'));
-    b.classList.add('on');
-    flyTo(VIEWS[b.dataset.view]);
-  });
-});
-
-// ————— build the world —————
-const sky = new SkyRig(scene);
-if (coarse) sky.sun.shadow.mapSize.set(1024, 1024);
-const { cityLights, water } = await buildWorld(scene); // loads the baked USGS heightfield
-const fogPipe = new FogPipeline(renderer);
+// portrait screens get a taller field of view so the city is not cropped away
+const fovFor = (aspect) => (aspect < 0.8 ? 58 : aspect < 1.2 ? 50 : 42);
+const camera = new THREE.PerspectiveCamera(fovFor(window.innerWidth / window.innerHeight), window.innerWidth / window.innerHeight, 2, 140000);
+const pipeline = new Pipeline(renderer, { fogScale: tier.fog, msaa: tier.msaa, bloom: tier.bloom });
+pipeline.fogUniforms.uSteps.value = tier.steps;
 
 // ————— simulation clock —————
-const NOW = Date.now();
 const sim = {
-  t: NOW,
-  live: true,       // tracking the real clock
+  t: Date.now(),
+  live: true,          // follows the real clock
   playing: false,
-  speed: 3600,      // sim seconds per real second when playing (1h ≈ 1s)
-  span: { t0: NOW - 2 * 3600e3, t1: NOW + 24 * 3600e3 },
+  speed: 1,            // multiplier of 1 forecast hour per second
+  span: { t0: Date.now() - 6 * 3600e3, t1: Date.now() + 30 * 3600e3 },
 };
 
-// ————— weather + UI —————
+// ————— load —————
+const assets = new AssetLoader((p) => ui.progress(p));
 const weather = new Weather();
-let ui = null;
+const weatherReady = weather.load();
+const world = new World(renderer, scene);
+let sky, rig, fogField = null;
 
-weather.load().then(() => {
-  // unhide before the UI measures its chart canvas — a hidden canvas measures 0×0
-  document.getElementById('hud').classList.remove('hidden');
-  ui = new UI(sim, weather);
-  document.getElementById('loading').classList.add('gone');
-  setTimeout(() => document.getElementById('loading').remove(), 1100);
-});
+try {
+  await world.load(assets, { lite: tierName === 'low' });
+} catch (e) {
+  console.error(e);
+  ui.fatal('The map data could not be loaded. Check your connection and reload the page.');
+  throw e;
+}
+sky = new SkyRig(renderer, scene, { shadowSize: tier.shadow });
+world.attachSky(sky);
+rig = new CameraRig(camera, canvas, world.solid, { obstacles: world.obstacles() });
+applyTier();
 
-// smoothed fog parameters, eased toward their targets so scrubbing never pops
-const smooth = {
-  I: 0.4, reachW: 4, reachG: 8, fogTop: hU(350), density: 0.5, blanket: 0, glow: 0,
-};
-function ease(cur, target, dt, rate = 5) {
-  return cur + (target - cur) * (1 - Math.exp(-dt * rate));
+pipeline.fogUniforms.tNoise.value = noiseVolume(64);
+pipeline.fogUniforms.tSky.value = sky.skyRT.texture;
+pipeline.fogUniforms.tGlow.value = world.glow;
+pipeline.fogUniforms.uGlowRect.value.copy(world.glowRect);
+
+await weatherReady;
+setSpan();
+fogField = new FogField(world.ground);
+fogField.build(weather, sim.span).then(() => {
+  pipeline.fogUniforms.tField.value = fogField.texture;
+  pipeline.fogUniforms.uFogOn.value = 1;
+  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+  requestRender();
+}).catch((e) => console.error('fog field', e));
+
+// top of the modeled fog layer at a point (where it is reasonably dense), or null
+function fogTopAt(x, z) {
+  if (!fogField || !fogField.texture) return null;
+  const cov = fogField.coverageAt(x, z, sim.t);
+  if (cov < 0.35) return null;
+  return weather.at(sim.t, 'top') + 60;
 }
 
-// ————— resize —————
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  fogPipe.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio());
+// keep "Live" honest: refresh the forecast every 30 minutes while the page is open
+setInterval(async () => {
+  if (document.hidden || weather.illustrative || ui.typical) return;
+  const prev = weather.state;
+  await weather.load();
+  if (weather.state === 'illustrative' && prev !== 'illustrative') return;
+  setSpan();
+  await fogField.build(weather, sim.span);
+  pipeline.fogUniforms.tField.value = fogField.texture;
+  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+  ui.dataChanged();
+}, 30 * 60e3);
+
+function setSpan() {
+  const now = Date.now();
+  const s = weather.span;
+  sim.span = {
+    t0: Math.max(s ? s.t0 : now - 6 * 3600e3, now - 6 * 3600e3),
+    t1: Math.min(s ? s.t1 : now + 30 * 3600e3, now + 30 * 3600e3),
+  };
+}
+
+ui.init({
+  sim, weather, rig, world,
+  onPreset: (name) => { rig.fly(name, 2.2, fogTopAt); requestRender(); },
+  onRise: () => { const t = fogTopAt(camera.position.x, camera.position.z); if (t != null) rig.rise(t); requestRender(); },
+  onRetry: async () => {
+    await weather.load();
+    setSpan();
+    await fogField.build(weather, sim.span);
+    pipeline.fogUniforms.tField.value = fogField.texture;
+    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+    ui.dataChanged();
+    requestRender();
+  },
+  onFields: async () => {
+    setSpan();
+    await fogField.build(weather, sim.span);
+    pipeline.fogUniforms.tField.value = fogField.texture;
+    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+    requestRender();
+  },
+  onQuality: (name) => { setTier(name, true); },
+  onChange: () => requestRender(),
+  tier: () => tierName,
 });
 
-// ————— main loop —————
+function applyTier() {
+  renderer.setPixelRatio(pixelRatio());
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  const s = renderer.getDrawingBufferSize(new THREE.Vector2());
+  pipeline.setSize(s.x, s.y);
+  pipeline.setFogScale(tier.fog);
+  pipeline.fogUniforms.uSteps.value = tier.steps;
+  if (pipeline.sceneRT.samples !== tier.msaa) { pipeline.sceneRT.samples = tier.msaa; pipeline.sceneRT.dispose(); }
+  pipeline.compUniforms.uBloomK.value = tier.bloom ? 0.06 : 0;
+  sky.sun.shadow.mapSize.set(tier.shadow, tier.shadow);
+  if (sky.sun.shadow.map) { sky.sun.shadow.map.dispose(); sky.sun.shadow.map = null; }
+  renderer.shadowMap.needsUpdate = true;
+  world.terrain.lodBias = tier.lod;
+  world.buildings.lodBias = tier.lod;
+  world.trees.lodBias = tier.lod;
+}
+
+let autoTier = !params.has('q');
+function setTier(name, fromUser = false) {
+  if (fromUser) {
+    autoTier = name === 'auto';
+    if (autoTier) { ui.qualityChanged(tierName, true); return; }
+  }
+  if (!TIERS[name]) return;
+  if (name !== tierName) {
+    tierName = name;
+    tier = TIERS[name];
+    applyTier();
+    requestRender();
+  }
+  ui.qualityChanged(name, autoTier);
+}
+
+// ————— resize / visibility —————
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.fov = fovFor(camera.aspect);
+  camera.updateProjectionMatrix();
+  applyTier();
+  requestRender();
+});
+let hidden = document.hidden;
+document.addEventListener('visibilitychange', () => {
+  hidden = document.hidden;
+  if (!hidden) { clock.getDelta(); requestRender(); }
+});
+
+// ————— frame —————
 const clock = new THREE.Clock();
-const sunNDC = new THREE.Vector3();
-let noiseT = 0;
+let elapsed = 0;
+let frameTimes = [];
+let lastAdapt = performance.now();
+let pending = false;
+let lastUiNow = 0;
 
-function frame() {
-  requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.1);
-  const elapsed = clock.elapsedTime;
+function requestRender() {
+  if (STILL || pending || hidden) return;
+  pending = true;
+  requestAnimationFrame(loop);
+}
 
-  // advance the sim clock
+let lastFrameAt = 0;
+function loop(now) {
+  pending = false;
+  if (hidden) return;
+  // nothing moving and time not playing: half rate is plenty for water and drifting fog
+  const idle = !sim.playing && !rig.tween && !rig.moving && performance.now() - lastInput > 1500;
+  if (idle && now - lastFrameAt < 30) { requestRender(); return; }
+  lastFrameAt = now;
+  const t0 = performance.now();
+  frame(Math.min(clock.getDelta(), 0.1));
+  const ft = performance.now() - t0;
+  adapt(ft);
+  requestRender();   // the scene is always alive: water, drifting fog, clock
+}
+let lastInput = performance.now();
+for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) {
+  window.addEventListener(ev, () => { lastInput = performance.now(); }, { passive: true });
+}
+
+// shadow map: only when the light's view or the geometry it sees changes
+const shadowKey = { pos: new THREE.Vector3(Infinity), sun: new THREE.Vector3(), frames: 0 };
+function shadowsNeedUpdate(st) {
+  const p = sky.sun.position;
+  const moved = p.distanceToSquared(shadowKey.pos) > 0.25 || st.sunDir.angleTo(shadowKey.sun) > 0.0015;
+  shadowKey.frames++;
+  if (moved || shadowKey.frames > 45) {
+    shadowKey.pos.copy(p);
+    shadowKey.sun.copy(st.sunDir);
+    shadowKey.frames = 0;
+    renderer.shadowMap.needsUpdate = true;
+  }
+}
+
+function frame(dt) {
+  elapsed += dt;
+  // advance the clock
   if (sim.playing) {
-    sim.t += dt * sim.speed * 1000;
-    if (sim.t > sim.span.t1) sim.t = Date.now(); // wrap back to the present
+    sim.t += dt * sim.speed * 3600e3;
+    if (sim.t >= sim.span.t1) { sim.t = sim.span.t1; sim.playing = false; ui.syncPlay(); }
   } else if (sim.live) {
     sim.t = Date.now();
   }
+  const date = new Date(sim.t);
+  const w = weather;
+  const windX = w.at(sim.t, 'windX') ?? 4, windZ = w.at(sim.t, 'windZ') ?? 0;
+  const high = (w.at(sim.t, 'high') ?? 10) / 100, mid = (w.at(sim.t, 'mid') ?? 5) / 100;
+  const vis = w.at(sim.t, 'vis');
+  const fog = (w.at(sim.t, 'fog') ?? 0) / 100;
 
-  // weather targets at the sim time
-  const I = weather.intensityAt(sim.t);
-  const simHours = (sim.t - NOW) / 3600e3;
-  noiseT = simHours * 4.0 + elapsed * 0.10;
+  rig.update(dt);
+  camera.updateMatrixWorld();
 
-  smooth.I = ease(smooth.I, I, dt);
-  smooth.reachW = ease(smooth.reachW, -2.5 + 26 * Math.pow(smooth.I, 1.2), dt);
-  smooth.reachG = ease(smooth.reachG, 30 * Math.pow(smooth.I, 1.1), dt);
-  smooth.fogTop = ease(smooth.fogTop, hU(170 + 430 * smooth.I), dt);
-  smooth.density = ease(smooth.density, 0.14 + 0.62 * Math.pow(smooth.I, 1.4), dt);
-  smooth.blanket = ease(smooth.blanket, THREE.MathUtils.smoothstep(smooth.I, 0.78, 0.96), dt);
+  const st = sky.update(date, camera, {
+    haze: 0.12 + 0.3 * fog,
+    cloudCover: Math.min(1, high * 0.9 + mid * 0.6),
+    windX: windX * 3, windZ: windZ * 3, time: elapsed,
+  });
+  const camDist = camera.position.distanceTo(rig.controls.target);
+  sky.fitShadow(rig.controls.target, camDist);
+  shadowsNeedUpdate(st);
 
-  // sun, sky, lights
-  const skyState = sky.update(new Date(sim.t), camera);
-  cityLights.material.opacity = skyState.nightF * 0.95;
-  smooth.glow = ease(smooth.glow, skyState.nightF * Math.min(smooth.I * 1.4, 1), dt);
+  world.terrain.update(camera);
+  world.terrain.setNight(st.nightF);
+  const litHour = litShare(date);
+  world.buildings.update(camera, { nightK: st.nightF, litHour });
+  world.landmarks.setNight(st.nightF, litHour);
+  world.trees.update(camera, st);
+  world.water.update(camera, st, { time: elapsed, windX, windZ });
+  world.bridges.update(camera, renderer.getDrawingBufferSize(_v2).y, st.nightF);
 
-  // feed the ocean
-  const wu = water.material.uniforms;
-  wu.uTime.value = elapsed;
-  wu.uCamPos.value.copy(camera.position);
-  wu.uSunDir.value.copy(skyState.sunDir);
-  wu.uSunCol.value.copy(skyState.sunCol);
-  wu.uSkyHor.value.copy(skyState.skyHor);
-  wu.uSkyZen.value.copy(skyState.skyZen);
-  wu.uDayF.value = skyState.dayF;
-  wu.fogColor.value.copy(skyState.fogColor);
-  wu.fogDensity.value = skyState.fogDensity;
-
-  // project the sun for the composite's lens glare
-  sunNDC.copy(skyState.sunDir).multiplyScalar(200).add(camera.position).project(camera);
-  const behind = sunNDC.z > 1;
-  const onScreen = !behind && Math.abs(sunNDC.x) < 1.35 && Math.abs(sunNDC.y) < 1.35;
-  const cu = fogPipe.compUniforms;
-  cu.uSunScreen.value.set(sunNDC.x * 0.5 + 0.5, sunNDC.y * 0.5 + 0.5);
-  cu.uSunVis.value = onScreen
-    ? THREE.MathUtils.smoothstep(skyState.elev, -4, 4) * (0.35 + 0.65 * skyState.duskF)
-    : 0;
-  cu.uGlareCol.value.copy(skyState.sunCol);
-
-  // feed the fog
-  const u = fogPipe.fogUniforms;
-  u.uIntensity.value = smooth.I;
-  u.uFogTop.value = smooth.fogTop;
-  u.uDensity.value = smooth.density;
-  u.uReachW.value = smooth.reachW;
-  u.uReachG.value = smooth.reachG;
-  u.uSpill.value = Math.max(0, smooth.fogTop - hU(280)) * 0.35 * 10; // km of ridge spill
-  u.uBlanket.value = smooth.blanket;
-  u.uNoiseOff.value.set(noiseT * 0.55, noiseT * 0.06, noiseT * 0.18);
-  u.uSunDir.value.copy(skyState.sunDir);
-  u.uSunCol.value.copy(skyState.sunCol).multiplyScalar(0.55);
-  u.uFogAmb.value.copy(skyState.fogAmb);
-  u.uGlowK.value = smooth.glow;
-
-  // camera tween
-  if (camTween) {
-    camTween.k = Math.min(1, camTween.k + dt / 1.6);
-    const e = 1 - Math.pow(1 - camTween.k, 3);
-    camera.position.lerpVectors(camTween.p0, camTween.p1, e);
-    controls.target.lerpVectors(camTween.t0, camTween.t1, e);
-    if (camTween.k >= 1) camTween = null;
+  // the marine layer
+  const u = pipeline.fogUniforms;
+  if (fogField && fogField.texture) {
+    u.uHourW.value = fogField.w(sim.t);
+    const [dx, dz] = w.drift(sim.t);
+    u.uDrift.value.set(dx, dz);
   }
-  controls.update();
+  u.uTime.value = elapsed + (sim.t - Date.now()) / 1000 * 0.02;
+  u.uSunDir.value.copy(st.sunDir);
+  u.uSunCol.value.copy(st.sunColor);
+  u.uSunI.value = st.sunIrr;
+  u.uSkyAmb.value.copy(st.skyAmbient);
+  u.uGroundAmb.value.copy(st.groundAmbient);
+  u.uNight.value = st.nightF;
+  // clear-air haze from forecast visibility. Forecast visibility tops out
+  // around 20-24 km, so anything above 15 km means clear air; the marine layer
+  // itself is handled by the fog volume, not by haze.
+  let hazeVis = 90000;
+  if (vis != null && vis < 15000 && fog < 0.4) hazeVis = THREE.MathUtils.clamp(vis * 2.5, 12000, 90000);
+  u.uHaze0.value = 3.912 / hazeVis;
+  pipeline.compUniforms.uExposure.value = 1.8 * (1 + 0.9 * st.duskF) + 3.2 * st.nightF;
+  pipeline.compUniforms.uWB.value.copy(st.wb);
 
-  fogPipe.render(scene, camera, elapsed);
-  if (ui) ui.update(Date.now());
+  // fog accumulates over frames while the view holds still; less so while playing
+  pipeline.render(scene, camera, elapsed, { blend: sim.playing ? 0.6 : 0.3 });
+
+  const now = performance.now();
+  if (now - lastUiNow > 120) {
+    lastUiNow = now;
+    // is the camera inside the layer? (the view is white, which can look like an error)
+    const top = fogTopAt(camera.position.x, camera.position.z);
+    const base = weather.at(sim.t, 'base') ?? 0;
+    ui.insideFog(top != null && camera.position.y < top - 50 && camera.position.y > base + 20 && !rig.tween);
+    ui.update(st);
+  }
+}
+const _v2 = new THREE.Vector2();
+
+// share of windows lit: evenings bright, small hours dim (Pacific time)
+function litShare(date) {
+  const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(date)) % 24;
+  if (h >= 17 && h < 23) return 1;
+  if (h >= 23 || h < 1) return 0.7;
+  if (h < 5) return 0.35;
+  return 0.6;
 }
 
-frame();
+// adaptive quality: step down when frames are slow, back up when there is room
+function adapt(ft) {
+  if (STILL || !autoTier) return;
+  frameTimes.push(ft);
+  if (frameTimes.length > 90) frameTimes.shift();
+  const now = performance.now();
+  if (now - lastAdapt < 4000 || frameTimes.length < 60) return;
+  const sorted = [...frameTimes].sort((a, b) => a - b);
+  const p50 = sorted[sorted.length >> 1];
+  const i = ORDER.indexOf(tierName);
+  if (p50 > 30 && i > 0) { setTier(ORDER[i - 1]); lastAdapt = now; frameTimes = []; }
+  else if (p50 < 9 && i < ORDER.length - 1 && !coarse) { setTier(ORDER[i + 1]); lastAdapt = now; frameTimes = []; }
+}
+
+ui.ready();
+if (STILL) frame(0.016); else requestRender();
+
+// small hook for automated previews and debugging
+window.karl = {
+  sim, weather, rig, world, pipeline, renderer, camera, scene, get sky() { return sky; },
+  setTime(ms) { sim.t = ms; sim.live = false; sim.playing = false; ui.syncPlay(); },
+  view(name) { rig.set(name); },
+  preset(name) { rig.fly(name, 0, fogTopAt); },
+  frames(n = 1) { for (let i = 0; i < n; i++) frame(1 / 30); return renderer.info.render; },
+  fogReady: () => !!(fogField && fogField.texture),
+  tier: () => tierName,
+  setTier,
+};

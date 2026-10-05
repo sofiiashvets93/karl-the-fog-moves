@@ -2,14 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🌁 Karl — the San Francisco Fog, live</title>
-<meta name="description" content="A live 3-D simulation of Karl the Fog rolling in and out of San Francisco, driven by real marine-layer forecast data.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Karl — San Francisco Live Fog Map</title>
+<meta name="description" content="A live 3D map of San Francisco's fog, modeled from current forecast data: watch the marine layer move over the city, the Golden Gate and the bay.">
 <meta name="author" content="Sofiia Shvets">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌁</text></svg>">
+<meta name="theme-color" content="#dfe6ec">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><circle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23e9eef2%22/><path d=%22M10 38c6-4 12-4 18 0s12 4 18 0 8-3 8-3M14 46c5-3 10-3 15 0s10 3 15 0%22 stroke=%22%235b6672%22 stroke-width=%223.5%22 fill=%22none%22 stroke-linecap=%22round%22/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Spline+Sans+Mono:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 {
@@ -22,88 +23,163 @@
 </head>
 <body>
 
-<div id="loading">
+<canvas id="scene" tabindex="0" aria-label="3D map of San Francisco and the fog. Drag to pan, right-drag or shift-drag to rotate, scroll or pinch to zoom."></canvas>
+
+<div id="loading" role="status" aria-live="polite">
   <div class="load-inner">
-    <div class="load-karl">KARL</div>
-    <div class="load-sub">summoning the marine layer…</div>
+    <div class="load-title">Karl</div>
+    <div class="load-bar" aria-hidden="true"><i id="load-fill"></i></div>
+    <div class="load-msg" id="load-msg">Loading terrain, buildings and the forecast…</div>
   </div>
 </div>
-
-<canvas id="scene"></canvas>
 
 <main id="hud" class="hidden">
 
-  <header id="brand" class="panel">
+  <header id="brand">
     <div class="brand-row">
       <h1>Karl</h1>
-      <div class="brand-chips">
-        <span id="live-chip" class="chip chip-live"><i class="dot"></i><span id="live-chip-text">LIVE</span></span>
-        <span id="date-chip" class="chip">JUN 10</span>
-      </div>
+      <button id="state" class="state" type="button" aria-describedby="state-tip">
+        <i class="dot" aria-hidden="true"></i><span id="state-text">Live</span>
+      </button>
+      <div id="state-tip" role="tooltip" class="tip"></div>
     </div>
-    <p class="tagline">The San Francisco Fog &middot; live 3-D simulation</p>
-    <p class="hint">drag to orbit &middot; scrub the timeline to time-travel</p>
-    <p class="credit">made by <a href="https://sofiiashvets.com/" target="_blank" rel="noopener">Sofiia Shvets</a></p>
-    <button id="foghorn" class="ghost-btn" title="Sound the Golden Gate foghorn">&#9836; foghorn</button>
+    <p class="subtitle">San Francisco Live Fog Map</p>
+    <p class="desc" id="desc">Fog movement modeled from live forecast data.</p>
   </header>
 
-  <section id="readout" class="panel">
-    <div class="cell">
-      <span class="num"><b id="r-fog">--</b><small>%</small></span>
-      <label>fog cover</label>
+  <section id="metrics" aria-label="Conditions at the selected time">
+    <div class="metric" title="Forecast low-cloud cover, averaged over four San Francisco points">
+      <span class="val"><b id="m-fog">–</b><small>%</small></span>
+      <span class="lbl">Fog cover</span>
     </div>
-    <div class="cell">
-      <span class="num"><b id="r-vis">--</b><small>mi</small></span>
-      <label>visibility</label>
+    <div class="metric" title="Forecast visibility, median of four San Francisco points">
+      <span class="val"><b id="m-vis">–</b><small id="m-vis-u">mi</small></span>
+      <span class="lbl">Visibility</span>
     </div>
-    <div class="cell">
-      <span class="num"><b id="r-wind">--</b><small id="r-wind-dir">W</small></span>
-      <label>wind mph</label>
+    <div class="metric" title="Forecast wind at the Golden Gate: speed and the direction it blows from">
+      <span class="val"><b id="m-wind">–</b><small id="m-wind-dir"></small></span>
+      <span class="lbl" id="m-wind-u">Wind mph</span>
     </div>
-    <div class="cell">
-      <span class="num"><b id="r-temp">--</b><small>&deg;F</small></span>
-      <label>air temp</label>
+    <div class="metric" title="Forecast air temperature, average of four San Francisco points">
+      <span class="val"><b id="m-temp">–</b><small id="m-temp-u">°F</small></span>
+      <span class="lbl">Air temp</span>
     </div>
   </section>
 
-  <nav id="views">
-    <button data-view="ocean"    class="ghost-btn on">The Pacific</button>
-    <button data-view="gate"     class="ghost-btn">Golden Gate</button>
-    <button data-view="downtown" class="ghost-btn">Downtown</button>
-    <button data-view="above"    class="ghost-btn">Above Karl</button>
+  <nav id="presets" aria-label="Camera views">
+    <button type="button" data-view="pacific" aria-pressed="true"><i aria-hidden="true"></i>The Pacific</button>
+    <button type="button" data-view="gate" aria-pressed="false"><i aria-hidden="true"></i>Golden Gate</button>
+    <button type="button" data-view="downtown" aria-pressed="false"><i aria-hidden="true"></i>Downtown</button>
+    <button type="button" data-view="above" aria-pressed="false"><i aria-hidden="true"></i>Above Karl</button>
   </nav>
 
-  <div id="caption">
-    <span class="caption-dash"></span>
-    <em id="caption-text">Karl is gathering himself offshore.</em>
-  </div>
-
-  <footer id="timeline" class="panel">
-    <div class="tl-top">
-      <button id="play" class="play-btn" title="Simulate the next 24 hours">
-        <svg id="play-icon" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
-        <svg id="pause-icon" viewBox="0 0 24 24" class="off"><path d="M6.5 4h4v16h-4zM13.5 4h4v16h-4z"/></svg>
+  <section id="dock" aria-label="Timeline">
+    <div class="dock-controls">
+      <button id="play" class="play" type="button" aria-label="Play the forecast">
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>
       </button>
-      <button id="now-btn" class="ghost-btn">now</button>
-      <button id="speed-btn" class="ghost-btn" title="Simulation speed">1&times;</button>
-      <div class="tl-time">
-        <b id="tl-clock">--:--</b>
-        <span id="tl-day">---</span>
-        <span id="tl-tag" class="chip chip-fc off">forecast</span>
+      <button id="now" class="chip" type="button" aria-pressed="true">Now</button>
+      <button id="speed" class="chip" type="button" aria-label="Playback speed: 1 forecast hour per second">1×</button>
+    </div>
+
+    <div class="dock-main">
+      <div class="dock-head">
+        <span class="legend" id="legend">Fog cover, % <span class="legend-sub">forecast low cloud</span></span>
+        <div class="when" aria-live="off">
+          <b id="t-clock">–:–</b>
+          <span id="t-day">–</span>
+          <span id="t-tag" class="tag">Now</span>
+        </div>
+      </div>
+      <div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="Time"
+           aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="">
+        <canvas id="chart" aria-hidden="true"></canvas>
       </div>
     </div>
-    <canvas id="chart"></canvas>
-    <div class="tl-foot">
-      <span>The next 24 hours of Karl &middot; <i id="data-src">marine forecast from Open-Meteo</i> &middot; <i>terrain from USGS, parks &copy; OpenStreetMap</i></span>
-      <span>not for navigation &#127753;</span>
+
+    <div class="dock-tools">
+      <button id="btn-data" class="tool" type="button" aria-label="Forecast details" aria-expanded="false" aria-controls="panel-data">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 16.5l5-6 4 3.5 6-7.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-settings" class="tool" type="button" aria-label="Settings" aria-expanded="false" aria-controls="panel-settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M4 12h3M11 12h9"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/><circle cx="9" cy="12" r="0.01"/></g></svg>
+      </button>
     </div>
+  </section>
+
+  <div id="panel-data" class="panel" role="dialog" aria-label="Forecast details" hidden>
+    <h2>At <span id="pd-time">–</span></h2>
+    <ul id="pd-points" class="points"></ul>
+    <dl class="facts">
+      <div><dt>Marine layer</dt><dd id="pd-layer">–</dd></div>
+      <div><dt>Wind</dt><dd id="pd-wind">–</dd></div>
+      <div><dt>Data</dt><dd id="pd-data">–</dd></div>
+    </dl>
+    <p class="note">The fog you see is a model: forecast low-cloud cover at these six points, shaped by terrain and wind. It is not a measurement of fog on each street.</p>
+  </div>
+
+  <div id="panel-settings" class="panel" role="dialog" aria-label="Settings" hidden>
+    <h2>Settings</h2>
+    <div class="row">
+      <span id="lbl-quality">Graphics</span>
+      <div class="seg" role="radiogroup" aria-labelledby="lbl-quality" id="quality">
+        <button type="button" role="radio" data-q="auto">Auto</button>
+        <button type="button" role="radio" data-q="low">Low</button>
+        <button type="button" role="radio" data-q="medium">Medium</button>
+        <button type="button" role="radio" data-q="high">High</button>
+      </div>
+    </div>
+    <div class="row">
+      <span id="lbl-units">Units</span>
+      <div class="seg" role="radiogroup" aria-labelledby="lbl-units" id="units">
+        <button type="button" role="radio" data-u="us">°F, mph, mi</button>
+        <button type="button" role="radio" data-u="metric">°C, km/h, km</button>
+      </div>
+    </div>
+    <div class="row">
+      <span id="lbl-typical">Typical fog day</span>
+      <button type="button" id="typical" class="switch" role="switch" aria-checked="false" aria-labelledby="lbl-typical"><i></i></button>
+    </div>
+    <p class="note" id="typical-note">Replaces the forecast with an illustrative fog-season day, for when San Francisco is clear.</p>
+    <div class="row">
+      <span>Golden Gate foghorn</span>
+      <button type="button" id="foghorn" class="chip">Sound</button>
+    </div>
+    <p class="note">Made by <a href="https://sofiiashvets.com/" target="_blank" rel="noopener">Sofiia Shvets</a>.</p>
+  </div>
+
+  <div id="mapctl" aria-label="Map controls" role="group">
+    <button type="button" id="zoom-in" class="ctl" aria-label="Zoom in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    <button type="button" id="zoom-out" class="ctl" aria-label="Zoom out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    <button type="button" id="reset" class="ctl" aria-label="Reset view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12a6.5 6.5 0 1 0 2-4.7M5.5 4.5v3.5H9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button type="button" id="compass" class="compass" aria-label="Compass: face north">
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-opacity=".55" stroke-width="1.2"/>
+        <g id="needle"><path d="M24 9l5.5 16H18.5z" fill="currentColor"/><path d="M24 39l-5.5-14h11z" fill="currentColor" fill-opacity=".25"/><text x="24" y="7.6" text-anchor="middle" font-size="6.5" fill="currentColor">N</text></g>
+      </svg>
+    </button>
+  </div>
+
+  <footer id="foot">
+    <p class="sources">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.3 4.4 4.4 0 0 0 7 18z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>Sources: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> forecast · USGS terrain · Copernicus Sentinel-2 · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> via Overture</span>
+      <span class="fresh" id="fresh"></span>
+    </p>
+    <p class="disclaimer">Not for navigation <span aria-hidden="true">•</span> <span id="model-note">Modeled visualization</span></p>
   </footer>
 
+  <div id="inside" class="inside" role="status" hidden>
+    <span>You're inside the fog layer.</span>
+    <button type="button" id="rise" class="chip">Rise above it</button>
+  </div>
+
+  <div id="hint" class="hint" aria-hidden="true">Drag to pan · Right-drag or Shift-drag to rotate · Scroll to zoom</div>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
 </main>
 
-<div id="webgl-fail" class="hidden">
-  <p>Karl needs WebGL2 to materialize.<br>Try a recent Chrome, Safari or Firefox.</p>
-</div>
+<div id="fatal" class="hidden" role="alert"><p id="fatal-msg"></p></div>
 
 <script type="module" src="js/main.js"></script>
 </body>
