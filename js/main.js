@@ -355,11 +355,15 @@ ui.ready();
 if (STILL) frame(0.016); else requestRender();
 
 // small hook for automated previews and debugging
+// keep the view buttons in step when a view is chosen without them
+const markView = (name) => document.querySelectorAll('#presets button')
+  .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === name)));
+
 window.karl = {
   sim, weather, rig, world, pipeline, renderer, camera, scene, get sky() { return sky; },
   setTime(ms) { sim.t = ms; sim.live = false; sim.playing = false; ui.syncPlay(); },
-  view(name) { rig.set(name); },
-  preset(name) { rig.fly(name, 0, fogTopAt); },
+  view(name) { rig.set(name); markView(name); },
+  preset(name) { rig.fly(name, 0, fogTopAt); markView(name); },
   frames(n = 1) { for (let i = 0; i < n; i++) frame(1 / 30); return renderer.info.render; },
   fogReady: () => !!(fogField && fogField.texture),
   tier: () => tierName,
