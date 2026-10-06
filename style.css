@@ -407,6 +407,8 @@ a { color: inherit; }
 .sources a:hover { text-decoration: underline; }
 .fresh { white-space: nowrap; color: var(--ink-3); }
 .disclaimer { font-size: 12.5px; white-space: nowrap; color: var(--ink-3); }
+.disclaimer .credit { color: var(--ink-2); text-decoration: none; }
+.disclaimer .credit:hover, .disclaimer .credit:focus-visible { text-decoration: underline; }
 
 .inside {
   position: absolute;

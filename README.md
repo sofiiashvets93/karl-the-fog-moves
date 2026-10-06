@@ -2,7 +2,7 @@
 
 **Live: [karlthefog.site](https://karlthefog.site)**
 
-Created by [Sofiia Shvets](https://sofiiashvets.com/).
+Built by [Sofi Shvets](https://x.com/Sofi_Shvets).
 
 A live 3D map of San Francisco's fog. The city, the Golden Gate and the bay
 are built from real elevation, satellite imagery and building data; the fog
