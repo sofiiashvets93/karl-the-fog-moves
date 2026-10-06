@@ -202,7 +202,7 @@ export class Weather {
       const ws = 4 + 6 * f;
       this.hours.push(this._derive(ms, {
         low, mid: low.map(() => 5), high: low.map(() => 15),
-        vis: low.map((l) => 16000 * Math.pow(1 - l / 100, 2) + 300), ws: low.map(() => ws), wd: low.map(() => 275),
+        vis: low.map((l) => 24000 * Math.pow(1 - l / 100, 2.4) + 200), ws: low.map(() => ws), wd: low.map(() => 275),
         temp: low.map(() => 14 + 6 * (1 - f)), dew: low.map(() => 12.5 + 1 * f),
       }, null));
     }
