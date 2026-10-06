@@ -27,7 +27,7 @@ device), `?still` renders only on demand (for automated screenshots).
 | --- | --- | --- |
 | Terrain and seabed | AWS Terrain Tiles (USGS 3DEP on land, NOAA bathymetry) | ~10 m grid over the city, ~60 m backdrop to Mt Tamalpais and Mt Diablo, true vertical scale, coastline conformed to OpenStreetMap |
 | Ground color | Copernicus Sentinel-2 L2A, 17 June 2025 | 10 m satellite color converted to surface reflectance, sharpened with OpenStreetMap roads, lawns, sand and roof outlines |
-| Buildings | Overture Maps (OpenStreetMap, incl. San Francisco's LiDAR-derived heights) | 184,000 real footprints; 92% with measured heights; landmark towers from detailed building parts |
+| Buildings | Overture Maps (OpenStreetMap, incl. San Francisco's LiDAR-derived heights) | 184,000 real footprints; 92% with measured heights; Salesforce Tower, Transamerica Pyramid and Sutro Tower modeled on their real footprints |
 | Trees | OpenStreetMap trees + Sentinel-2 vegetation index | 280,000 trees, as lit impostors |
 | Golden Gate Bridge | Surveyed tower foundations (OpenStreetMap), published dimensions | 1,280 m main span, 227 m towers, 27.4 m deck with see-through stiffening truss, 144 m cable sag, suspenders every 15.24 m |
 | Bay Bridge | Surveyed supports (OpenStreetMap) | West span towers, center anchorage, east span tower |
@@ -56,10 +56,12 @@ For every forecast hour (`js/workers/fogfield-worker.js`):
   cover at the six points.
 
 The hourly fields are stored as one 3D texture and blended smoothly in time.
-The renderer raymarches it against the scene depth, with a nearly flat
-inversion top, wisps only where coverage is partial, sunlight and sky light
-scattered through the layer, and city light glowing underneath at night.
-Wisps drift with the forecast wind.
+The renderer raymarches it against the scene depth: an inversion top with
+long, gentle swells stretched along the forecast wind, ragged lobes only
+where coverage is partial, sunlight and sky light scattered through the
+layer, city light glowing underneath it at night, and whatever is seen
+through it softened as well as dimmed. Its structure drifts with the
+forecast wind.
 
 The **Fog cover** reading and the timeline curve are the forecast low-cloud
 cover averaged over the four San Francisco points — a forecast value, not a
@@ -84,8 +86,14 @@ shows the illustrative day on purpose.
 ## Rendering
 
 - Scene rendered to a half-float target (MSAA on capable devices), then the
-  marine layer and clear-air haze are raymarched at reduced resolution and
-  upsampled with depth awareness; ACES tone mapping and a light bloom.
+  marine layer and clear-air haze are raymarched at reduced resolution. The
+  march skips clear air with a cheap search of the fog field first, so its
+  samples land inside the layer; a depth-aware denoise and, while the view
+  holds still, accumulation over frames remove the jitter noise; the result
+  is upsampled with depth awareness. ACES tone mapping and a light bloom.
+- Exposure follows the light reaching the ground (sun plus sky) and adapts
+  only partly, so dusk reads darker than day. Street lamps, windows and the
+  city's glow in the fog switch on around sunset.
 - Physically based sky (single scattering) that also lights the scene and
   feeds reflections; sun position from the NOAA solar algorithm; shadow map
   fitted to the view.
@@ -99,7 +107,8 @@ shows the illustrative day on purpose.
 
 - `js/main.js` — boot, quality tiers, simulation clock, render loop
 - `js/world.js` — assembles terrain, water, buildings, trees, bridges, landmarks
-- `js/terrain.js`, `js/water.js`, `js/buildings.js`, `js/trees.js`, `js/bridges.js`
+- `js/terrain.js`, `js/water.js`, `js/buildings.js`, `js/trees.js`, `js/bridges.js`,
+  `js/landmarks.js`
 - `js/sky.js` — sun position, sky model, lighting
 - `js/fogfield.js`, `js/workers/fogfield-worker.js` — the fog model
 - `js/fogpass.js` — fog and haze raymarching, bloom, composite
