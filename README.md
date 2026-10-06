@@ -9,6 +9,12 @@ are built from real elevation, satellite imagery and building data; the fog
 is modeled from the current forecast and moves with it. Scrub or play the
 timeline to see how the marine layer is expected to come and go.
 
+![The Pacific view on an October afternoon](shots/pacific-afternoon.jpg)
+
+More in [`shots/`](shots): the fog breaking up in the morning, the Golden
+Gate, downtown at golden hour, dusk, and a foggy night. These were rendered
+with a simulated forecast, since this build was tested offline.
+
 ## Run it
 
 No build step. Serve the folder over HTTP (ES modules and workers need it):
