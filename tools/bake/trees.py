@@ -62,9 +62,10 @@ def main():
     keep_p = np.where(tall[iy, ix] > 0.5, 0.42, 0.16) * (0.4 + 0.6 * dens[iy, ix])
     keep = rng.random(len(iy)) < keep_p
     iy, ix = iy[keep], ix[keep]
-    px_m = (x1m - x0m) / N
-    x = x0m + (ix + rng.random(len(ix))) * px_m
-    z = z0m + (iy + rng.random(len(iy))) * px_m
+    # the region is not square: rows and columns have different sizes in meters
+    px_x, px_z = (x1m - x0m) / N, (z1m - z0m) / N
+    x = x0m + (ix + rng.random(len(ix))) * px_x
+    z = z0m + (iy + rng.random(len(iy))) * px_z
     is_tall = tall[iy, ix] > 0.5
     h = np.where(is_tall, rng.uniform(14, 32, len(ix)), rng.uniform(5, 12, len(ix)))
     r = np.where(is_tall, rng.uniform(3.2, 6.0, len(ix)), rng.uniform(2.0, 3.8, len(ix)))
