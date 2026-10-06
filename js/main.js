@@ -93,7 +93,7 @@ fogField = new FogField(world.ground);
 fogField.build(weather, sim.span).then(() => {
   pipeline.fogUniforms.tField.value = fogField.texture;
   pipeline.fogUniforms.uFogOn.value = 1;
-  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 80;
   requestRender();
 }).catch((e) => console.error('fog field', e));
 
@@ -114,7 +114,7 @@ setInterval(async () => {
   setSpan();
   await fogField.build(weather, sim.span);
   pipeline.fogUniforms.tField.value = fogField.texture;
-  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+  pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 80;
   ui.dataChanged();
 }, 30 * 60e3);
 
@@ -136,7 +136,7 @@ ui.init({
     setSpan();
     await fogField.build(weather, sim.span);
     pipeline.fogUniforms.tField.value = fogField.texture;
-    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 80;
     ui.dataChanged();
     requestRender();
   },
@@ -144,7 +144,7 @@ ui.init({
     setSpan();
     await fogField.build(weather, sim.span);
     pipeline.fogUniforms.tField.value = fogField.texture;
-    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 60;
+    pipeline.fogUniforms.uMaxTop.value = Math.max(...weather.hours.map((h) => h.top)) + 80;
     requestRender();
   },
   onQuality: (name) => { setTier(name, true); },
@@ -275,13 +275,13 @@ function frame(dt) {
   shadowsNeedUpdate(st);
 
   world.terrain.update(camera);
-  world.terrain.setNight(st.nightF);
+  world.terrain.setNight(st.lightsF);
   const litHour = litShare(date);
-  world.buildings.update(camera, { nightK: st.nightF, litHour });
-  world.landmarks.setNight(st.nightF, litHour);
+  world.buildings.update(camera, { nightK: st.lightsF, litHour });
+  world.landmarks.setNight(st.lightsF, litHour);
   world.trees.update(camera, st);
   world.water.update(camera, st, { time: elapsed, windX, windZ });
-  world.bridges.update(camera, renderer.getDrawingBufferSize(_v2).y, st.nightF);
+  world.bridges.update(camera, renderer.getDrawingBufferSize(_v2).y, st.lightsF);
 
   // the marine layer
   const u = pipeline.fogUniforms;
@@ -289,6 +289,7 @@ function frame(dt) {
     u.uHourW.value = fogField.w(sim.t);
     const [dx, dz] = w.drift(sim.t);
     u.uDrift.value.set(dx, dz);
+    if (Math.hypot(windX, windZ) > 0.1) u.uWind.value.set(windX, windZ).normalize();
   }
   u.uTime.value = elapsed + (sim.t - Date.now()) / 1000 * 0.02;
   u.uSunDir.value.copy(st.sunDir);
@@ -296,14 +297,20 @@ function frame(dt) {
   u.uSunI.value = st.sunIrr;
   u.uSkyAmb.value.copy(st.skyAmbient);
   u.uGroundAmb.value.copy(st.groundAmbient);
-  u.uNight.value = st.nightF;
+  u.uNight.value = st.lightsF;
   // clear-air haze from forecast visibility. Forecast visibility tops out
   // around 20-24 km, so anything above 15 km means clear air; the marine layer
   // itself is handled by the fog volume, not by haze.
   let hazeVis = 90000;
   if (vis != null && vis < 15000 && fog < 0.4) hazeVis = THREE.MathUtils.clamp(vis * 2.5, 12000, 90000);
   u.uHaze0.value = 3.912 / hazeVis;
-  pipeline.compUniforms.uExposure.value = 1.8 * (1 + 0.9 * st.duskF) + 3.2 * st.nightF;
+  // exposure follows the light on the ground (sun plus sky), adapting only
+  // partly, the way eyes do: dusk reads darker than day, and from about
+  // twenty minutes before sunset on it holds the night setting the city
+  // lights are balanced for
+  const skyLum = 0.2126 * st.skyAmbient.r + 0.7152 * st.skyAmbient.g + 0.0722 * st.skyAmbient.b;
+  const E = Math.max(st.sunIrr * Math.max(st.sunDir.y, 0) + Math.PI * skyLum, 0.0186);
+  pipeline.compUniforms.uExposure.value = THREE.MathUtils.clamp(3.9 / Math.pow(E, 0.75), 1.8, 5.0);
   pipeline.compUniforms.uWB.value.copy(st.wb);
 
   // fog accumulates over frames while the view holds still; less so while playing

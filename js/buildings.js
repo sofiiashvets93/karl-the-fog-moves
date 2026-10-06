@@ -68,9 +68,9 @@ function facadeMaterial() {
         // into a flat glowing wall. Some buildings are mostly dark.
         float bShare = 0.2 + 0.8 * fract(variant * 17.31);
         float litK = (kind < 1.5 ? 0.32 : kind < 2.5 ? 0.42 : kind < 3.5 ? 0.1 : 0.25) * uLitHour * bShare;
-        vec2 sec = cell / (kind < 1.5 ? vec2(2.0, 1.0) : vec2(3.0, 1.0));
+        vec2 sec = cell / vec2(2.0, 1.0);
         vec2 fwS = fwidth(sec);
-        float lodR = log2(max(max(fwS.x, fwS.y), 1e-4) * 2.0);
+        float lodR = log2(max(max(fwS.x, fwS.y), 1e-4) * 1.2);
         float lod = clamp(lodR, 0.0, 4.0);
         float l0 = floor(lod), lf = lod - l0;
         vec2 sd = vec2(variant * 57.0 + l0 * 13.0, kind * 3.0 + 0.5);

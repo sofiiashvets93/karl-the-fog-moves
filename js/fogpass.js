@@ -26,6 +26,7 @@ const fogFrag = /* glsl */`
   uniform float uHourW;
   uniform sampler3D tNoise;
   uniform vec2 uDrift;           // wind drift of the air mass (m)
+  uniform vec2 uWind;            // unit vector the air moves toward
   uniform float uTime;
   uniform float uSigma;          // extinction at density 1 (1/m)
   uniform float uMaxTop;
@@ -81,20 +82,22 @@ const fogFrag = /* glsl */`
     vec2 uv = (xz - uDomain.xy) / uDomain.zw;
     topBase = texture(tField, vec3(uv, uHourW)).b * 1020.0;
     vec2 q = xz - uDrift;
-    float r1 = texture(tNoise, vec3(q / 3400.0, uTime * 0.0003)).g;
-    float r2 = texture(tNoise, vec3(q / 820.0, 0.37 + uTime * 0.0006)).r;
-    // billow cells, warped and stronger in some places than others
-    vec2 wq = q + (texture(tNoise, vec3(q / 1300.0, 0.53)).rb - 0.5) * 260.0;
-    float r3 = texture(tNoise, vec3(wq / 270.0, 0.71)).g;
-    float cellK = 0.35 + 1.1 * texture(tNoise, vec3(q / 5200.0, 0.19)).b;
-    return topBase + (r1 - 0.5) * 60.0 + (r2 - 0.5) * 44.0 + (r3 - 0.5) * 22.0 * cellK;
+    // long swells, stretched along the wind
+    vec2 qa = vec2(dot(q, uWind), dot(q, vec2(-uWind.y, uWind.x)));
+    float r1 = texture(tNoise, vec3(q / 14000.0, uTime * 0.0002)).r;
+    float r2 = texture(tNoise, vec3(qa / vec2(9000.0, 4200.0), 0.37 + uTime * 0.0004)).g;
+    // softer billows on top, warped, stronger in some places than others
+    vec2 wq = q + (texture(tNoise, vec3(q / 5000.0, 0.53)).rb - 0.5) * 700.0;
+    float r3 = texture(tNoise, vec3(wq / 2600.0, 0.71)).g;
+    float cellK = 0.3 + texture(tNoise, vec3(q / 22000.0, 0.19)).r;
+    return topBase + (r1 - 0.5) * 90.0 + (r2 - 0.5) * 56.0 + (r3 - 0.5) * 40.0 * cellK;
   }
 
   // could there be fog here? Reads only the field, with room for the top's relief
   bool nearFog(vec3 p) {
     vec2 uv = (p.xz - uDomain.xy) / uDomain.zw;
     vec4 F = texture(tField, vec3(uv, uHourW));
-    return F.r > 0.13 && p.y < F.b * 1020.0 + 85.0 && p.y > F.g * 1020.0 - 40.0;
+    return F.r > 0.13 && p.y < F.b * 1020.0 + 115.0 && p.y > F.g * 1020.0 - 40.0;
   }
 
   // density in [0..1] times local density scale; also returns layer top
@@ -239,20 +242,20 @@ const fogFrag = /* glsl */`
             sun *= uSunCol * uSunI * sunUp * 3.2;
             // the top surface's own slope, once per ray where it enters the layer
             if (!haveN) {
-              float e = 70.0, t1, t2, t3;
+              float e = 60.0, t1, t2, t3;
               float h0 = topAt(p.xz, t1), hx = topAt(p.xz + vec2(e, 0.0), t2), hz = topAt(p.xz + vec2(0.0, e), t3);
               nTop = normalize(vec3(h0 - hx, e, h0 - hz));
               haveN = true;
             }
-            float lam = clamp(dot(nTop, uSunDir) / sy, 0.35, 1.9);
-            sun *= mix(1.0, lam, exp(-above0 / 40.0) * 0.85);
+            float lam = clamp(dot(nTop, uSunDir) / sy, 0.3, 2.0);
+            sun *= mix(1.0, lam, exp(-above0 / 40.0));
             // sky light from above, dim from below; deep fog is darker
             float hf = clamp((p.y - (topL - 260.0)) / 260.0, 0.0, 1.0);
             // troughs between swells see less sky
             float trough = clamp((tb - p.y) / 60.0, 0.0, 1.5);
             // (at night the sky over the city is not black: its glow lights the top a little)
             vec3 skyA = uSkyAmb * 1.25 + vec3(0.0065, 0.006, 0.0058) * uNight;
-            vec3 amb = mix(uGroundAmb * 1.3, skyA, 0.25 + 0.75 * hf) * exp(-sigF * above0 * 0.12) * (1.0 - 0.18 * trough);
+            vec3 amb = mix(uGroundAmb * 1.3, skyA, 0.25 + 0.75 * hf) * exp(-sigF * above0 * 0.12) * (1.0 - 0.32 * trough);
             vec3 glow = vec3(0.0);
             if (uNight > 0.01) {
               // city light from below, diffusing up through the layer: the whole
@@ -386,7 +389,6 @@ const compFrag = /* glsl */`
   }
 
   void main() {
-    vec3 scene = texture2D(tScene, vUv).rgb;
     float d0 = linDepth(texture2D(tDepth, vUv).x);
     // depth-aware upsample of the half-resolution fog
     vec2 fp = vUv * uFogSize - 0.5;
@@ -406,14 +408,18 @@ const compFrag = /* glsl */`
       }
     }
     vec4 fog = acc / wsum;
+    // fog scatters light forward as well as dimming it: what is seen through
+    // it is softened, more the thicker the fog in front
+    float blurLod = clamp(-log2(max(fog.a, 1e-3)) * 0.55, 0.0, 2.6);
+    vec3 scene = textureLod(tScene, vUv, blurLod).rgb;
     vec3 col = scene * fog.a + fog.rgb;
     col += texture2D(tBloom, vUv).rgb * uBloomK * (0.4 + 0.6 * fog.a);
     col *= uExposure * uWB;
     col = aces(col);
     // a little more color and depth than the filmic curve leaves
     float lumC = dot(col, vec3(0.2126, 0.7152, 0.0722));
-    col = max(mix(vec3(lumC), col, 1.12), 0.0);
-    col = mix(col, col * col * (3.0 - 2.0 * col), 0.18);
+    col = max(mix(vec3(lumC), col, 1.16), 0.0);
+    col = mix(col, col * col * (3.0 - 2.0 * col), 0.24);
     // gentle grade: a touch of warmth in the highlights, cooler shadows
     float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     col = mix(col, col * vec3(1.03, 1.0, 0.96), smoothstep(0.4, 0.9, l));
@@ -456,6 +462,9 @@ export class Pipeline {
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, {
       type: THREE.HalfFloatType, depthTexture: this.depthTexture, samples: msaa,
     });
+    // mipmapped, so the composite can soften what is seen through thick fog
+    this.sceneRT.texture.generateMipmaps = true;
+    this.sceneRT.texture.minFilter = THREE.LinearMipmapLinearFilter;
     this.fogRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(w * fogScale)), Math.max(2, Math.floor(h * fogScale)), {
       type: THREE.HalfFloatType, depthBuffer: false,
     });
@@ -483,6 +492,7 @@ export class Pipeline {
       uHourW: { value: 0 },
       tNoise: { value: null },
       uDrift: { value: new THREE.Vector2() },
+      uWind: { value: new THREE.Vector2(1, 0) },
       uTime: { value: 0 },
       uSigma: { value: 0.012 },
       uMaxTop: { value: 800 },

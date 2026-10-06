@@ -7,7 +7,7 @@ import { W } from './geo.js';
 
 // presets: camera and target as [lon, lat, height m]
 export const PRESETS = {
-  pacific: { label: 'The Pacific', cam: [-122.531, 37.739, 1450], tgt: [-122.452, 37.797, 0] },
+  pacific: { label: 'The Pacific', cam: [-122.575, 37.770, 2200], tgt: [-122.440, 37.8206, 0] },
   gate: { label: 'Golden Gate', cam: [-122.5045, 37.8078, 330], tgt: [-122.4777, 37.8185, 95] },
   downtown: { label: 'Downtown', cam: [-122.3745, 37.7742, 520], tgt: [-122.4005, 37.7925, 70] },
   above: { label: 'Above Karl', cam: [-122.476, 37.672, 5600], tgt: [-122.452, 37.778, 0] },
@@ -68,12 +68,16 @@ export class CameraRig {
     const p = PRESETS[name];
     if (!p) return;
     const { pos, tgt } = presetVectors(p);
-    // a preset should show the fog, not put you inside it: rise above the top
+    // a preset should show the fog, not put you inside it: when the layer is
+    // deeper than the viewpoint, look down on it from above, on the same
+    // heading and steeply enough that its swells and the hills breaking
+    // through it still read
     const top = fogTop ? fogTop(pos.x, pos.z) : null;
     if (top != null && pos.y < top + 140) {
-      const lift = top + 140 - pos.y;
-      pos.y += lift;
-      tgt.y = Math.max(tgt.y, Math.min(top - 40, tgt.y + lift * 0.5));
+      const y = top + 600;
+      const dx = pos.x - tgt.x, dz = pos.z - tgt.z, d = Math.hypot(dx, dz) || 1;
+      const dist = (y - tgt.y) / Math.tan(THREE.MathUtils.degToRad(15));
+      pos.set(tgt.x + (dx / d) * dist, y, tgt.z + (dz / d) * dist);
     }
     this.flyTo(pos, tgt, duration);
     this.current = name;

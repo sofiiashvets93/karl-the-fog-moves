@@ -392,7 +392,7 @@ export class SkyRig {
     this._sunCol = new THREE.Color();
     this._tmp = new THREE.Color();
     this.state = {
-      sunDir: new THREE.Vector3(0, 1, 0), elev: 45, dayF: 1, duskF: 0, nightF: 0,
+      sunDir: new THREE.Vector3(0, 1, 0), elev: 45, dayF: 1, duskF: 0, nightF: 0, lightsF: 0,
       sunColor: new THREE.Color(1, 1, 1), sunIrr: 3, skyAmbient: new THREE.Color(0.3, 0.35, 0.45),
       horizon: new THREE.Color(0.6, 0.7, 0.8), groundAmbient: new THREE.Color(0.1, 0.1, 0.1), envReady: false,
     };
@@ -407,6 +407,8 @@ export class SkyRig {
     st.dayF = THREE.MathUtils.smoothstep(elev, -6, 8);
     st.duskF = Math.exp(-Math.pow((elev - 2) / 8, 2));
     st.nightF = 1 - THREE.MathUtils.smoothstep(elev, -14, -2);
+    // street lamps and windows: photocells switch on around sunset, not at full dark
+    st.lightsF = 1 - THREE.MathUtils.smoothstep(elev, -5, 3);
 
     const mie = 8e-6 + 40e-6 * haze;
     this.skyUniforms.uMie.value = mie;

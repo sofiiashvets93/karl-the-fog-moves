@@ -147,9 +147,9 @@ function facade(o) {
         // lit in sections of a few windows across two floors, as on the city's buildings
         float h = lmHash(floor(cell) + ${f(o.seed ?? 1)});
         float litK = ${f(o.lit ?? 0)} * uLitHour;
-        vec2 sec = cell / vec2(3.0, 1.0);
+        vec2 sec = cell / vec2(2.0, 1.0);
         vec2 fwS = fwidth(sec);
-        float lodR = log2(max(max(fwS.x, fwS.y), 1e-4) * 2.0);
+        float lodR = log2(max(max(fwS.x, fwS.y), 1e-4) * 1.2);
         float lod = clamp(lodR, 0.0, 4.0);
         float l0 = floor(lod), lf = lod - l0;
         float sd = ${f((o.seed ?? 1) * 3.1)} + l0 * 13.0;

@@ -199,7 +199,7 @@ function makeMaterial(uniforms) {
           float inside = step(0.0, gu.x) * step(gu.x, 1.0) * step(0.0, gu.y) * step(gu.y, 1.0);
           float urban = texture2D(tGlow, gu).r * inside;
           float road = smoothstep(0.93, 0.81, tc.a) * smoothstep(0.3, 0.6, tc.a);
-          totalEmissiveRadiance += vec3(1.0, 0.7, 0.42) * (urban * (0.01 + 0.16 * road) + 0.018 * road) * uNightK;
+          totalEmissiveRadiance += vec3(1.0, 0.7, 0.42) * (urban * (0.008 + 0.1 * road) + 0.012 * road) * uNightK;
         }
       `)
       .replace('#include <normal_fragment_begin>', /* glsl */`

@@ -533,8 +533,8 @@ a { color: inherit; }
   }
   #presets::-webkit-scrollbar { display: none; }
   #presets { justify-content: space-between; }
-  #presets button { font-size: 13px; padding: 7px 8px; white-space: nowrap; gap: 5px; flex: 1 1 auto; justify-content: center; }
-  #presets button i { width: 6px; height: 6px; }
+  #presets button { font-size: 13px; padding: 7px 6px; white-space: nowrap; gap: 0; flex: 1 1 auto; justify-content: center; }
+  #presets button i { display: none; }
   #presets button + button { border-top: 0; border-left: 1px solid var(--line); }
 
   /* compact dock: controls and time on one row, the curve below */
